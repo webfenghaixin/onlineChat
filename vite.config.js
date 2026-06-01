@@ -1,8 +1,18 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
-import { URL } from 'node:url';
 
-function createProxyPlugin() {
+const SOURCE_ENV_MAP = {
+  luxee: {
+    key: 'API_KEY_LUXEE',
+    endpoint: 'https://api.luxee.ai/v1/chat/completions',
+  },
+  rightcode: {
+    key: 'API_KEY_RIGHTCODE',
+    endpoint: 'https://right.codes/codex-pro/v1/chat/completions',
+  },
+};
+
+function createProxyPlugin(env) {
   return {
     name: 'local-chat-proxy',
     configureServer(server) {
@@ -10,7 +20,7 @@ function createProxyPlugin() {
         if (req.method === 'OPTIONS') {
           res.statusCode = 204;
           res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Target-URL');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Source');
           res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
           res.end();
           return;
@@ -23,28 +33,40 @@ function createProxyPlugin() {
           return;
         }
 
-        const targetUrl = req.headers['x-target-url'];
-        if (typeof targetUrl !== 'string' || !targetUrl.trim()) {
+        const source = ((req.headers['x-source'] || 'luxee') + '').toLowerCase();
+        const sourceConfig = SOURCE_ENV_MAP[source];
+
+        if (!sourceConfig) {
           res.statusCode = 400;
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: 'Missing X-Target-URL header.' }));
+          res.end(JSON.stringify({ error: `Unknown source: ${source}. Available: luxee, rightcode.` }));
+          return;
+        }
+
+        const serverApiKey = env[sourceConfig.key] || '';
+        const serverEndpoint = sourceConfig.endpoint || '';
+
+        if (!serverEndpoint) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.end(JSON.stringify({ error: `Server endpoint not configured for source: ${source}. Check .env file.` }));
           return;
         }
 
         let parsedUrl;
         try {
-          parsedUrl = new URL(targetUrl);
+          parsedUrl = new URL(serverEndpoint);
         } catch (error) {
-          res.statusCode = 400;
+          res.statusCode = 500;
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: 'Invalid target URL.' }));
+          res.end(JSON.stringify({ error: 'Invalid server endpoint configuration.' }));
           return;
         }
 
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-          res.statusCode = 400;
+          res.statusCode = 500;
           res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: 'Target URL must use http or https.' }));
+          res.end(JSON.stringify({ error: 'Server endpoint must use http or https.' }));
           return;
         }
 
@@ -55,13 +77,17 @@ function createProxyPlugin() {
 
         const body = Buffer.concat(chunks);
 
+        const upstreamHeaders = {
+          'content-type': req.headers['content-type'] || 'application/json',
+        };
+        if (serverApiKey) {
+          upstreamHeaders.authorization = `Bearer ${serverApiKey}`;
+        }
+
         try {
-          const upstreamResponse = await fetch(targetUrl, {
+          const upstreamResponse = await fetch(serverEndpoint, {
             method: 'POST',
-            headers: {
-              'content-type': req.headers['content-type'] || 'application/json',
-              authorization: req.headers.authorization || '',
-            },
+            headers: upstreamHeaders,
             body,
           });
 
@@ -110,15 +136,19 @@ function createProxyPlugin() {
   };
 }
 
-export default defineConfig({
-  base: './',
-  plugins: [react(), createProxyPlugin()],
-  server: {
-    host: true,
-  },
-  build: {
-    rollupOptions: {
-      input: 'index.html',
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+
+  return {
+    base: './',
+    plugins: [react(), createProxyPlugin(env)],
+    server: {
+      host: true,
     },
-  },
+    build: {
+      rollupOptions: {
+        input: 'index.html',
+      },
+    },
+  };
 });

@@ -4,8 +4,19 @@ export const config = {
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Target-URL',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Source',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+const SOURCE_ENV_MAP = {
+  luxee: {
+    key: 'API_KEY_LUXEE',
+    endpoint: 'https://api.luxee.ai/v1/chat/completions',
+  },
+  rightcode: {
+    key: 'API_KEY_RIGHTCODE',
+    endpoint: 'https://right.codes/codex-pro/v1/chat/completions',
+  },
 };
 
 function jsonResponse(statusCode, body, extraHeaders = {}) {
@@ -28,24 +39,38 @@ export default async function handler(request) {
     return jsonResponse(405, { error: 'Only POST is allowed.' });
   }
 
-  const targetUrl = request.headers.get('x-target-url');
-  if (!targetUrl || !targetUrl.trim()) {
-    return jsonResponse(400, { error: 'Missing X-Target-URL header.' });
+  const source = (request.headers.get('x-source') || 'luxee').toLowerCase();
+  const sourceConfig = SOURCE_ENV_MAP[source];
+
+  if (!sourceConfig) {
+    return jsonResponse(400, { error: `Unknown source: ${source}. Available: luxee, rightcode.` });
   }
+
+  const serverApiKey = process.env[sourceConfig.key] || '';
+  const serverEndpoint = sourceConfig.endpoint || '';
+
+  if (!serverEndpoint) {
+    return jsonResponse(500, { error: `Server endpoint not configured for source: ${source}.` });
+  }
+
+  const targetUrl = serverEndpoint;
 
   let parsedUrl;
   try {
     parsedUrl = new URL(targetUrl);
   } catch {
-    return jsonResponse(400, { error: 'Invalid target URL.' });
+    return jsonResponse(500, { error: 'Invalid server endpoint configuration.' });
   }
 
   if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-    return jsonResponse(400, { error: 'Target URL must use http or https.' });
+    return jsonResponse(500, { error: 'Server endpoint must use http or https.' });
   }
 
   const contentType = request.headers.get('content-type') || 'application/json';
-  const authorization = request.headers.get('authorization') || '';
+
+  const authorization = serverApiKey
+    ? `Bearer ${serverApiKey}`
+    : '';
 
   let requestBody;
   try {
@@ -54,13 +79,17 @@ export default async function handler(request) {
     return jsonResponse(400, { error: 'Failed to read request body.' });
   }
 
+  const upstreamHeaders = {
+    'Content-Type': contentType,
+  };
+  if (authorization) {
+    upstreamHeaders.Authorization = authorization;
+  }
+
   try {
     const upstreamResponse = await fetch(targetUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': contentType,
-        Authorization: authorization,
-      },
+      headers: upstreamHeaders,
       body: requestBody,
     });
 

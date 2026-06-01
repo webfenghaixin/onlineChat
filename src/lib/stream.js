@@ -48,6 +48,19 @@ function collectTextFromValue(value) {
   return '';
 }
 
+function normalizeMessageContent(content) {
+  if (Array.isArray(content)) {
+    return content;
+  }
+
+  return [
+    {
+      type: 'text',
+      text: typeof content === 'string' ? content : '',
+    },
+  ];
+}
+
 function extractTextFromEvent(payload) {
   if (!payload || typeof payload !== 'object') {
     return '';
@@ -112,7 +125,7 @@ function extractTextFromEvent(payload) {
 function buildMessagesPayload(messages, systemPrompt) {
   const normalized = messages.map((message) => ({
     role: message.role,
-    content: message.content,
+    content: normalizeMessageContent(message.content),
   }));
 
   if (!systemPrompt.trim()) {
@@ -122,7 +135,12 @@ function buildMessagesPayload(messages, systemPrompt) {
   return [
     {
       role: 'system',
-      content: systemPrompt.trim(),
+      content: [
+        {
+          type: 'text',
+          text: systemPrompt.trim(),
+        },
+      ],
     },
     ...normalized,
   ];
@@ -137,12 +155,19 @@ function buildRequestBody(settings, messages) {
       model: model || undefined,
       input: normalizedMessages.map((message) => ({
         role: message.role,
-        content: [
-          {
+        content: message.content.map((item) => {
+          if (item.type === 'image_url') {
+            return {
+              type: 'input_image',
+              image_url: item.image_url?.url || '',
+            };
+          }
+
+          return {
             type: 'input_text',
-            text: message.content,
-          },
-        ],
+            text: item.text || '',
+          };
+        }),
       })),
       temperature,
       max_output_tokens: Number(maxOutputTokens) || undefined,
@@ -192,12 +217,12 @@ function buildRequestHeaders(settings) {
     'Content-Type': 'application/json',
   };
 
-  if (settings.apiKey.trim()) {
-    headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
-  }
-
   if (settings.useProxy) {
-    headers['X-Target-URL'] = settings.endpoint.trim();
+    headers['X-Source'] = settings.source || 'luxee';
+  } else {
+    if (settings.apiKey.trim()) {
+      headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
+    }
   }
 
   return headers;

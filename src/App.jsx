@@ -1,42 +1,104 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { streamChatCompletion } from './lib/stream';
 
-const STORAGE_KEY = 'online-chat-h5-state-v2';
+const STORAGE_KEY = 'online-chat-h5-state-v4';
+const LEGACY_STORAGE_KEYS = ['online-chat-h5-state-v3', 'online-chat-h5-state-v2', 'online-chat-h5-state-v1'];
+const ACCESS_KEY = 'online-chat-h5-access';
+const ACCESS_PASSWORD = import.meta.env.VITE_ACCESS_PASSWORD || '';
+const MAX_COMPOSER_HEIGHT = 140;
+const FONT_SIZE_OPTIONS = [
+  { value: 'md', label: '标准' },
+  { value: 'lg', label: '大字' },
+  { value: 'xl', label: '超大' },
+];
+
+const SOURCE_OPTIONS = [
+  { value: 'luxee', label: 'Luxee' },
+  { value: 'rightcode', label: 'RightCode' },
+];
 
 const defaultSettings = {
-  endpoint: 'https://api.luxee.ai/v1/chat/completions',
-  apiKey: '123456',
-  model: 'gpt5.4',
-  requestMode: 'chat',
+  source: 'rightcode',
+  endpoint: '',
+  apiKey: '',
+  model: 'gpt-5.4-medium',
+  requestMode: 'responses',
   systemPrompt: '你是一位耐心、清晰、友好的 AI 助手。请优先用简洁易懂的中文回答。',
   temperature: 0.7,
   maxOutputTokens: 2048,
   stream: true,
   useProxy: true,
   proxyPath: '/api/proxy',
+  fontSize: 'xl',
 };
 
+function getTextParts(content) {
+  if (Array.isArray(content)) {
+    return content
+      .filter((item) => item?.type === 'text' && item.text)
+      .map((item) => item.text)
+      .join('\n');
+  }
+
+  return typeof content === 'string' ? content : '';
+}
+
+function getImageParts(content) {
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  return content.filter((item) => item?.type === 'image_url' && item.image_url?.url);
+}
+
+function createTextContent(text) {
+  return [
+    {
+      type: 'text',
+      text,
+    },
+  ];
+}
+
 function createConversation() {
-  const id = crypto.randomUUID();
+  const now = Date.now();
   return {
-    id,
+    id: crypto.randomUUID(),
     title: '新的对话',
-    updatedAt: Date.now(),
+    updatedAt: now,
     messages: [
       {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: '您好，我已经准备好了。请直接输入问题，我会用流式方式持续输出回答。',
+        content: createTextContent('你好，直接把问题发给我就行。我会尽量用清楚、好读的方式回答。'),
+        createdAt: now,
       },
     ],
   };
 }
 
-function normalizeLegacyState(parsed) {
+function normalizeMessage(message, fallbackTimestamp) {
+  const rawContent = Array.isArray(message?.content)
+    ? message.content
+    : createTextContent(typeof message?.content === 'string' ? message.content : '');
+
+  return {
+    ...message,
+    content: rawContent,
+    createdAt: message?.createdAt || fallbackTimestamp || Date.now(),
+  };
+}
+
+function normalizeState(parsed) {
   const initialConversation = createConversation();
   const conversations =
     Array.isArray(parsed?.conversations) && parsed.conversations.length
-      ? parsed.conversations
+      ? parsed.conversations.map((conversation) => ({
+          ...conversation,
+          messages: (conversation.messages || []).map((message) =>
+            normalizeMessage(message, conversation.updatedAt),
+          ),
+        }))
       : [initialConversation];
 
   return {
@@ -53,25 +115,46 @@ function loadState() {
   try {
     const currentRaw = localStorage.getItem(STORAGE_KEY);
     if (currentRaw) {
-      return normalizeLegacyState(JSON.parse(currentRaw));
+      return normalizeState(JSON.parse(currentRaw));
     }
 
-    const legacyRaw = localStorage.getItem('online-chat-h5-state-v1');
-    if (legacyRaw) {
-      return normalizeLegacyState(JSON.parse(legacyRaw));
+    for (const key of LEGACY_STORAGE_KEYS) {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        return normalizeState(JSON.parse(raw));
+      }
     }
   } catch (error) {
-    return normalizeLegacyState(null);
+    return normalizeState(null);
   }
 
-  return normalizeLegacyState(null);
+  return normalizeState(null);
 }
 
 function saveState(state) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+function loadAccessGranted() {
+  try {
+    return localStorage.getItem(ACCESS_KEY) === 'granted';
+  } catch (error) {
+    return false;
+  }
+}
+
+function saveAccessGranted(granted) {
+  localStorage.setItem(ACCESS_KEY, granted ? 'granted' : 'locked');
+}
+
 function formatTime(timestamp) {
+  return new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(timestamp);
+}
+
+function formatDateTime(timestamp) {
   return new Intl.DateTimeFormat('zh-CN', {
     month: '2-digit',
     day: '2-digit',
@@ -85,11 +168,22 @@ function buildConversationTitle(messages) {
   if (!firstUserMessage) {
     return '新的对话';
   }
-  return firstUserMessage.content.slice(0, 18) || '新的对话';
+
+  const titleSource = getTextParts(firstUserMessage.content);
+  return titleSource.slice(0, 18) || '新的对话';
 }
 
 function classNames(...values) {
   return values.filter(Boolean).join(' ');
+}
+
+function buildCopyText(message) {
+  const text = getTextParts(message.content).trim();
+  if (!text) {
+    return '';
+  }
+
+  return `${message.role === 'assistant' ? 'AI' : '我'}：${text}`;
 }
 
 export default function App() {
@@ -101,16 +195,26 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [statusText, setStatusText] = useState('已就绪');
   const [errorText, setErrorText] = useState('');
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState('history');
+  const [copiedMessageId, setCopiedMessageId] = useState('');
+  const [accessGranted, setAccessGranted] = useState(loadAccessGranted);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [pendingImage, setPendingImage] = useState(null);
 
   const abortControllerRef = useRef(null);
+  const composerRef = useRef(null);
+  const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
   );
   const activeMessages = activeConversation?.messages || [];
+  const hasUserMessages = activeMessages.some((message) => message.role === 'user');
+  const draftHasText = draft.trim().length > 0;
+  const canSend = (draftHasText || Boolean(pendingImage)) && !isSending && accessGranted;
 
   useEffect(() => {
     saveState({
@@ -121,14 +225,40 @@ export default function App() {
   }, [settings, conversations, activeConversationId]);
 
   useEffect(() => {
+    saveAccessGranted(accessGranted);
+  }, [accessGranted]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [activeMessages, historyOpen, drawerTab]);
+  }, [activeMessages, drawerOpen, drawerTab]);
 
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) {
+      return;
+    }
+
+    composer.style.height = 'auto';
+    composer.style.height = `${Math.min(composer.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
+  }, [draft]);
+
+  useEffect(() => {
+    if (!copiedMessageId) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setCopiedMessageId('');
+    }, 1500);
+
+    return () => window.clearTimeout(timer);
+  }, [copiedMessageId]);
 
   function updateConversation(conversationId, updater) {
     setConversations((current) =>
@@ -147,14 +277,20 @@ export default function App() {
     );
   }
 
+  function openDrawer(tab) {
+    setDrawerTab(tab);
+    setDrawerOpen(true);
+  }
+
   function createNewConversation() {
     const conversation = createConversation();
     setConversations((current) => [conversation, ...current]);
     setActiveConversationId(conversation.id);
     setDraft('');
+    setPendingImage(null);
     setErrorText('');
     setStatusText('已创建新对话');
-    setHistoryOpen(false);
+    setDrawerOpen(false);
   }
 
   function removeConversation(conversationId) {
@@ -180,29 +316,71 @@ export default function App() {
     setStatusText('已停止生成');
   }
 
-  async function sendMessage() {
-    const content = draft.trim();
-    if (!content || isSending || !activeConversation) {
+  async function copyMessage(message) {
+    const text = buildCopyText(message);
+    if (!text) {
       return;
     }
 
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedMessageId(message.id);
+    } catch (error) {
+      setErrorText('复制失败，请检查浏览器权限。');
+    }
+  }
+
+  async function sendMessage(customContent) {
+    const content =
+      customContent ||
+      [
+        ...(draft.trim()
+          ? [
+              {
+                type: 'text',
+                text: draft.trim(),
+              },
+            ]
+          : []),
+        ...(pendingImage
+          ? [
+              {
+                type: 'image_url',
+                image_url: {
+                  url: pendingImage.url,
+                },
+              },
+            ]
+          : []),
+      ];
+    const textContent = getTextParts(content).trim();
+    const hasImage = getImageParts(content).length > 0;
+
+    if ((!textContent && !hasImage) || isSending || !activeConversation || !accessGranted) {
+      return;
+    }
+
+    const now = Date.now();
     const userMessage = {
       id: crypto.randomUUID(),
       role: 'user',
       content,
+      createdAt: now,
     };
 
     const assistantMessage = {
       id: crypto.randomUUID(),
       role: 'assistant',
-      content: '',
+      content: createTextContent(''),
+      createdAt: now,
     };
 
     const nextMessages = [...activeConversation.messages, userMessage, assistantMessage];
     setDraft('');
+    setPendingImage(null);
     setErrorText('');
     setIsSending(true);
-    setStatusText('正在流式生成回答...');
+    setStatusText('正在回复');
 
     updateConversation(activeConversation.id, (conversation) => ({
       ...conversation,
@@ -224,7 +402,10 @@ export default function App() {
             ...conversation,
             messages: conversation.messages.map((message) =>
               message.id === assistantMessage.id
-                ? { ...message, content: `${message.content}${text}` }
+                ? {
+                    ...message,
+                    content: createTextContent(`${getTextParts(message.content)}${text}`),
+                  }
                 : message,
             ),
           }));
@@ -234,8 +415,8 @@ export default function App() {
       updateConversation(activeConversation.id, (conversation) => ({
         ...conversation,
         messages: conversation.messages.map((message) =>
-          message.id === assistantMessage.id && !message.content.trim()
-            ? { ...message, content: '接口已连接，但没有返回可显示的文本内容。' }
+          message.id === assistantMessage.id && !getTextParts(message.content).trim()
+            ? { ...message, content: createTextContent('接口已连接，但没有返回可显示的文本内容。') }
             : message,
         ),
       }));
@@ -246,8 +427,8 @@ export default function App() {
         updateConversation(activeConversation.id, (conversation) => ({
           ...conversation,
           messages: conversation.messages.map((message) =>
-            message.id === assistantMessage.id && !message.content.trim()
-              ? { ...message, content: '本次回答已手动停止。' }
+            message.id === assistantMessage.id && !getTextParts(message.content).trim()
+              ? { ...message, content: createTextContent('本次回答已停止。') }
               : message,
           ),
         }));
@@ -258,8 +439,8 @@ export default function App() {
         updateConversation(activeConversation.id, (conversation) => ({
           ...conversation,
           messages: conversation.messages.map((message) =>
-            message.id === assistantMessage.id && !message.content.trim()
-              ? { ...message, content: `出错了：${nextErrorText}` }
+            message.id === assistantMessage.id && !getTextParts(message.content).trim()
+              ? { ...message, content: createTextContent(`出错了：${nextErrorText}`) }
               : message,
           ),
         }));
@@ -279,22 +460,115 @@ export default function App() {
 
   function quickFill(text) {
     setDraft(text);
+    composerRef.current?.focus();
+  }
+
+  function handlePasswordSubmit(event) {
+    event.preventDefault();
+
+    if (passwordInput === ACCESS_PASSWORD) {
+      setAccessGranted(true);
+      setPasswordError('');
+      setPasswordInput('');
+      return;
+    }
+
+    setPasswordError('密码不正确');
+  }
+
+  function handleLogout() {
+    setAccessGranted(false);
+    setDrawerOpen(false);
+    setStatusText('请先输入密码');
+  }
+
+  function handleUploadClick() {
+    if (!accessGranted) {
+      return;
+    }
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChange(event) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      setErrorText('只能上传图片文件。');
+      event.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      setPendingImage({
+        name: file.name,
+        url: result,
+      });
+      setErrorText('');
+      if (!draft.trim()) {
+        setDraft('请结合这张图片回答。');
+      }
+    };
+    reader.onerror = () => {
+      setErrorText('图片读取失败，请重试。');
+    };
+    reader.readAsDataURL(file);
+    event.target.value = '';
+  }
+
+  function clearPendingImage() {
+    setPendingImage(null);
+  }
+
+  if (!accessGranted) {
+    return (
+      <div className="gate-shell">
+        <section className="gate-card">
+          <div className="gate-badge">访问验证</div>
+          <h1>请输入密码</h1>
+          <p>输入正确密码后，才能使用聊天、上传图片和设置等全部功能。</p>
+
+          <form className="gate-form" onSubmit={handlePasswordSubmit}>
+            <input
+              className="gate-input"
+              type="password"
+              inputMode="numeric"
+              value={passwordInput}
+              onChange={(event) => {
+                setPasswordInput(event.target.value);
+                setPasswordError('');
+              }}
+              placeholder="请输入密码"
+            />
+            <button className="gate-button" type="submit">
+              进入聊天
+            </button>
+          </form>
+
+          {passwordError && <div className="gate-error">{passwordError}</div>}
+        </section>
+      </div>
+    );
   }
 
   return (
-    <div className="app-shell">
-      <aside className={classNames('side-sheet', historyOpen && 'side-sheet-open')}>
-        <div className="sheet-header">
+    <div className={classNames('chat-app', `font-scale-${settings.fontSize || 'md'}`)}>
+      <aside className={classNames('drawer', drawerOpen && 'drawer-open')}>
+        <div className="drawer-header">
           <div>
-            <div className="sheet-title">菜单</div>
-            <div className="sheet-subtitle">在这里切换对话和接口设置</div>
+            <div className="drawer-kicker">在线 AI 聊天</div>
+            <div className="drawer-title">{drawerTab === 'history' ? '对话记录' : '接口设置'}</div>
           </div>
-          <button className="icon-button" type="button" onClick={() => setHistoryOpen(false)}>
+          <button className="plain-icon-button" type="button" onClick={() => setDrawerOpen(false)}>
             关闭
           </button>
         </div>
 
-        <div className="drawer-tabs">
+        <div className="drawer-tabs" role="tablist">
           <button
             className={classNames('tab-button', drawerTab === 'history' && 'tab-button-active')}
             type="button"
@@ -312,7 +586,7 @@ export default function App() {
         </div>
 
         {drawerTab === 'history' ? (
-          <>
+          <div className="history-pane">
             <button className="primary-button wide-button" type="button" onClick={createNewConversation}>
               新建对话
             </button>
@@ -334,15 +608,18 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         setActiveConversationId(conversation.id);
-                        setHistoryOpen(false);
+                        setDrawerOpen(false);
                       }}
                     >
                       <span className="history-title">{conversation.title}</span>
-                      <span className="history-time">{formatTime(conversation.updatedAt)}</span>
+                      <span className="history-time">
+                        {conversation.messages.length} 条消息 · {formatDateTime(conversation.updatedAt)}
+                      </span>
                     </button>
                     <button
                       className="history-delete"
                       type="button"
+                      aria-label="删除对话"
                       onClick={() => removeConversation(conversation.id)}
                     >
                       删除
@@ -350,32 +627,70 @@ export default function App() {
                   </div>
                 ))}
             </div>
-          </>
+          </div>
         ) : (
           <div className="settings-form">
             <label className="field">
-              <span className="field-label">请求地址</span>
-              <input
+              <span className="field-label">字体大小</span>
+              <select
                 className="field-input"
-                value={settings.endpoint}
+                value={settings.fontSize}
                 onChange={(event) =>
-                  setSettings((current) => ({ ...current, endpoint: event.target.value }))
+                  setSettings((current) => ({ ...current, fontSize: event.target.value }))
                 }
-                placeholder="请输入真实上游接口地址"
-              />
+              >
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="field">
-              <span className="field-label">密钥</span>
-              <input
+              <span className="field-label">接口来源</span>
+              <select
                 className="field-input"
-                value={settings.apiKey}
+                value={settings.source}
                 onChange={(event) =>
-                  setSettings((current) => ({ ...current, apiKey: event.target.value }))
+                  setSettings((current) => ({ ...current, source: event.target.value }))
                 }
-                placeholder="请输入 API Key"
-              />
+              >
+                {SOURCE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </label>
+
+            {!settings.useProxy && (
+              <>
+                <label className="field">
+                  <span className="field-label">请求地址</span>
+                  <input
+                    className="field-input"
+                    value={settings.endpoint}
+                    onChange={(event) =>
+                      setSettings((current) => ({ ...current, endpoint: event.target.value }))
+                    }
+                    placeholder="请输入真实上游接口地址"
+                  />
+                </label>
+
+                <label className="field">
+                  <span className="field-label">密钥</span>
+                  <input
+                    className="field-input"
+                    value={settings.apiKey}
+                    onChange={(event) =>
+                      setSettings((current) => ({ ...current, apiKey: event.target.value }))
+                    }
+                    placeholder="请输入 API Key"
+                  />
+                </label>
+              </>
+            )}
 
             <label className="field">
               <span className="field-label">模型名</span>
@@ -485,124 +800,154 @@ export default function App() {
                 placeholder="/api/proxy 或 https://你的代理地址"
               />
             </label>
+
+            <button className="secondary-button wide-button" type="button" onClick={handleLogout}>
+              退出并锁定
+            </button>
           </div>
         )}
       </aside>
 
-      {historyOpen && (
+      {drawerOpen && (
         <button
-          className="backdrop"
+          className="drawer-backdrop"
           type="button"
           aria-label="关闭面板"
-          onClick={() => {
-            setHistoryOpen(false);
-          }}
+          onClick={() => setDrawerOpen(false)}
         />
       )}
 
-      <main className="main-panel">
-        <header className="top-bar">
-          <button
-            className="icon-button"
-            type="button"
-            onClick={() => {
-              setDrawerTab('settings');
-              setHistoryOpen(true);
-            }}
-          >
-            菜单
+      <main className="phone-shell">
+        <header className="chat-header">
+          <button className="header-button" type="button" onClick={() => openDrawer('history')}>
+            <span aria-hidden="true">☰</span>
           </button>
 
-          <div className="title-block">
-            <h1>在线 AI 聊天</h1>
-            <p>大字号、流式输出、适合手机直接使用</p>
+          <div className="chat-title">
+            <h1>{activeConversation?.title || '在线 AI 聊天'}</h1>
+            <p>
+              <span className={classNames('status-dot', isSending && 'status-dot-live')} />
+              {statusText}
+            </p>
           </div>
 
-          <div className="top-bar-spacer" />
+          <button className="header-button" type="button" onClick={() => openDrawer('settings')}>
+            <span aria-hidden="true">⚙</span>
+          </button>
         </header>
 
-        <section className="hero-card">
-          <div>
-            <div className="hero-title">连接信息</div>
-            <div className="hero-value">{settings.endpoint || '请先填写请求地址'}</div>
-            <div className="hero-caption">
-              {settings.useProxy
-                ? `当前通过 ${settings.proxyPath || '/api/proxy'} 同源代理转发`
-                : '当前直接从浏览器请求上游接口'}
-            </div>
-          </div>
-          <div className="hero-actions">
-            <span className={classNames('status-pill', isSending && 'status-pill-live')}>{statusText}</span>
-            <button className="secondary-button" type="button" onClick={createNewConversation}>
-              新对话
-            </button>
-          </div>
-        </section>
+        <section className="message-list" aria-live="polite">
+          {activeMessages.map((message) => {
+            const isLatestAssistant =
+              isSending &&
+              message.role === 'assistant' &&
+              message === activeMessages[activeMessages.length - 1];
+            const images = getImageParts(message.content);
+            const text = getTextParts(message.content);
+            const isAssistant = message.role === 'assistant';
 
-        {!activeMessages.filter((message) => message.role === 'user').length && (
-          <section className="suggestions">
-            <button className="suggestion-chip" type="button" onClick={() => quickFill('请帮我总结今天的工作安排')}>
-              帮我总结工作安排
-            </button>
-            <button className="suggestion-chip" type="button" onClick={() => quickFill('请用简单中文解释这个概念')}>
-              用简单中文解释概念
-            </button>
-            <button className="suggestion-chip" type="button" onClick={() => quickFill('请一步一步教我怎么操作')}>
-              一步一步教我操作
-            </button>
-          </section>
-        )}
-
-        <section className="message-list">
-          {activeMessages.map((message) => (
-            <article
-              key={message.id}
-              className={classNames(
-                'message-row',
-                message.role === 'user' ? 'message-user' : 'message-assistant',
-              )}
-            >
-              <div className="avatar">{message.role === 'user' ? '我' : 'AI'}</div>
-              <div className="bubble-wrap">
-                <div className="bubble-role">{message.role === 'user' ? '您' : '助手'}</div>
-                <div className="bubble">
-                  {message.content || (isSending && message.role === 'assistant' ? '正在思考...' : '')}
-                  {isSending &&
-                    message.role === 'assistant' &&
-                    message === activeMessages[activeMessages.length - 1] && <span className="typing-cursor" />}
+            return (
+              <article
+                key={message.id}
+                className={classNames(
+                  'message-row',
+                  message.role === 'user' ? 'message-user' : 'message-assistant',
+                )}
+              >
+                <div className="message-meta">
+                  <span>{message.role === 'user' ? '我' : 'AI'}</span>
+                  <time>{formatTime(message.createdAt || Date.now())}</time>
                 </div>
-              </div>
-            </article>
-          ))}
+
+                <div className="message-bubble">
+                  {images.length > 0 && (
+                    <div className="message-images">
+                      {images.map((image) => (
+                        <img
+                          key={image.image_url.url}
+                          className="message-image"
+                          src={image.image_url.url}
+                          alt="上传图片"
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {text || (isLatestAssistant ? '正在思考...' : '')}
+                  {isLatestAssistant && <span className="typing-cursor" />}
+                </div>
+
+                {isAssistant && (
+                  <div className="message-tools">
+                    <button
+                      type="button"
+                      className={classNames('tool-button', copiedMessageId === message.id && 'tool-button-copied')}
+                      onClick={() => copyMessage(message)}
+                    >
+                      {copiedMessageId === message.id ? '已复制 ✓' : '复制'}
+                    </button>
+                  </div>
+                )}
+              </article>
+            );
+          })}
           <div ref={messagesEndRef} />
         </section>
 
         <footer className="composer-panel">
           {errorText && <div className="error-banner">{errorText}</div>}
 
-          <textarea
-            className="composer-input"
-            rows={4}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={handleComposerKeyDown}
-            placeholder="请输入您的问题。按 Enter 发送，Shift + Enter 换行。"
-          />
+          {pendingImage && (
+            <div className="pending-image-card">
+              <img className="pending-image-preview" src={pendingImage.url} alt="待发送图片" />
+              <div className="pending-image-info">
+                <div className="pending-image-title">已添加图片</div>
+                <div className="pending-image-name">{pendingImage.name}</div>
+              </div>
+              <button className="pending-image-remove" type="button" onClick={clearPendingImage}>
+                移除
+              </button>
+            </div>
+          )}
 
-          <div className="composer-actions">
-            <button className="secondary-button" type="button" onClick={() => setDraft('')}>
-              清空输入
+          <div className="composer-box">
+            <button className="upload-button" type="button" onClick={handleUploadClick} aria-label="上传图片">
+              图片
             </button>
+
+            <textarea
+              ref={composerRef}
+              className="composer-input"
+              rows={1}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
+              placeholder="输入消息..."
+            />
+
             {isSending ? (
-              <button className="danger-button" type="button" onClick={stopStreaming}>
-                停止回答
+              <button className="send-button stop-button" type="button" onClick={stopStreaming}>
+                停止
               </button>
             ) : (
-              <button className="primary-button" type="button" onClick={sendMessage}>
-                发送消息
+              <button
+                className="send-button"
+                type="button"
+                disabled={!canSend}
+                onClick={() => sendMessage()}
+              >
+                发送
               </button>
             )}
           </div>
+
+          <input
+            ref={fileInputRef}
+            className="hidden-input"
+            type="file"
+            accept="image/*"
+            onChange={handleFileChange}
+          />
         </footer>
       </main>
     </div>

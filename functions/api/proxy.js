@@ -11,7 +11,7 @@ const SOURCE_ENV_MAP = {
   },
   rightcode: {
     key: 'API_KEY_RIGHTCODE',
-    endpoint: 'https://right.codes/codex-pro/v1/chat/completions',
+    endpoint: 'https://www.right.codes/codex-pro/v1/chat/completions',
   },
 };
 

@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { streamChatCompletion } from './lib/stream';
 
-const STORAGE_KEY = 'online-chat-h5-state-v4';
-const LEGACY_STORAGE_KEYS = ['online-chat-h5-state-v3', 'online-chat-h5-state-v2', 'online-chat-h5-state-v1'];
+const STORAGE_KEY = 'online-chat-h5-state-v6';
 const ACCESS_KEY = 'online-chat-h5-access';
 const ACCESS_PASSWORD = import.meta.env.VITE_ACCESS_PASSWORD || '';
 const MAX_COMPOSER_HEIGHT = 140;
@@ -32,15 +31,15 @@ const defaultSettings = {
   source: 'rightcode',
   endpoint: '',
   apiKey: '',
-  model: 'gpt-5.4-medium',
-  requestMode: 'responses',
+  model: 'gpt-5.4',
+  requestMode: 'chat',
   systemPrompt: '你是一位耐心、清晰、友好的 AI 助手。请优先用简洁易懂的中文回答。',
   temperature: 0.7,
-  maxOutputTokens: 2048,
+  maxOutputTokens: 8192,
   stream: true,
   useProxy: true,
   proxyPath: '/api/proxy',
-  fontSize: 'xl',
+  fontSize: 'lg',
 };
 
 function getTextParts(content) {
@@ -127,13 +126,6 @@ function loadState() {
     const currentRaw = localStorage.getItem(STORAGE_KEY);
     if (currentRaw) {
       return normalizeState(JSON.parse(currentRaw));
-    }
-
-    for (const key of LEGACY_STORAGE_KEYS) {
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        return normalizeState(JSON.parse(raw));
-      }
     }
   } catch (error) {
     return normalizeState(null);

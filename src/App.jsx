@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { streamChatCompletion } from './lib/stream';
+import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername } from './lib/auth';
 
 const STORAGE_KEY = 'online-chat-h5-state-v6';
-const ACCESS_KEY = 'online-chat-h5-access';
-const ACCESS_PASSWORD = import.meta.env.VITE_ACCESS_PASSWORD || '';
+const VITE_INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
 const MAX_COMPOSER_HEIGHT = 140;
 const FONT_SIZE_OPTIONS = [
   { value: 'md', label: '标准' },
@@ -136,18 +136,6 @@ function loadState() {
 
 function saveState(state) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function loadAccessGranted() {
-  try {
-    return localStorage.getItem(ACCESS_KEY) === 'granted';
-  } catch (error) {
-    return false;
-  }
-}
-
-function saveAccessGranted(granted) {
-  localStorage.setItem(ACCESS_KEY, granted ? 'granted' : 'locked');
 }
 
 function formatTime(timestamp) {
@@ -306,9 +294,12 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState('history');
   const [copiedMessageId, setCopiedMessageId] = useState('');
-  const [accessGranted, setAccessGranted] = useState(loadAccessGranted);
-  const [passwordInput, setPasswordInput] = useState('');
-  const [passwordError, setPasswordError] = useState('');
+  const [authState, setAuthState] = useState(() => (getToken() ? 'loading' : 'auth-form'));
+  const [authTab, setAuthTab] = useState('login');
+  const [authForm, setAuthForm] = useState({ username: '', password: '', inviteCode: '' });
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [currentUser, setCurrentUser] = useState(() => getStoredUsername());
   const [pendingImage, setPendingImage] = useState(null);
 
   const abortControllerRef = useRef(null);
@@ -316,6 +307,7 @@ export default function App() {
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const messageListRef = useRef(null);
+  const cloudSaveTimerRef = useRef(null);
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
@@ -323,7 +315,7 @@ export default function App() {
   const activeMessages = activeConversation?.messages || [];
   const hasUserMessages = activeMessages.some((message) => message.role === 'user');
   const draftHasText = draft.trim().length > 0;
-  const canSend = (draftHasText || Boolean(pendingImage)) && !isSending && accessGranted;
+  const canSend = (draftHasText || Boolean(pendingImage)) && !isSending && authState === 'authenticated';
 
   useEffect(() => {
     saveState({
@@ -331,11 +323,34 @@ export default function App() {
       conversations,
       activeConversationId,
     });
-  }, [settings, conversations, activeConversationId]);
+    if (authState !== 'authenticated') return;
+    clearTimeout(cloudSaveTimerRef.current);
+    cloudSaveTimerRef.current = setTimeout(() => {
+      saveToCloud({ settings, conversations, activeConversationId }).catch(() => {});
+    }, 3000);
+  }, [settings, conversations, activeConversationId, authState]);
 
   useEffect(() => {
-    saveAccessGranted(accessGranted);
-  }, [accessGranted]);
+    if (authState !== 'loading') return;
+    let cancelled = false;
+    loadFromCloud()
+      .then((data) => {
+        if (cancelled) return;
+        if (data.settings) {
+          const normalized = normalizeState(data);
+          setSettings(normalized.settings);
+          setConversations(normalized.conversations);
+          setActiveConversationId(normalized.activeConversationId);
+        }
+        setAuthState('authenticated');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        clearToken();
+        setAuthState('auth-form');
+      });
+    return () => { cancelled = true; };
+  }, [authState]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -465,7 +480,7 @@ export default function App() {
     const textContent = getTextParts(content).trim();
     const hasImage = getImageParts(content).length > 0;
 
-    if ((!textContent && !hasImage) || isSending || !activeConversation || !accessGranted) {
+    if ((!textContent && !hasImage) || isSending || !activeConversation || authState !== 'authenticated') {
       return;
     }
 
@@ -572,27 +587,45 @@ export default function App() {
     composerRef.current?.focus();
   }
 
-  function handlePasswordSubmit(event) {
+  async function handleAuthSubmit(event) {
     event.preventDefault();
+    setAuthError('');
 
-    if (passwordInput === ACCESS_PASSWORD) {
-      setAccessGranted(true);
-      setPasswordError('');
-      setPasswordInput('');
-      return;
+    if (authTab === 'register') {
+      if (VITE_INVITE_CODE && authForm.inviteCode !== VITE_INVITE_CODE) {
+        setAuthError('邀请码不正确');
+        return;
+      }
     }
 
-    setPasswordError('密码不正确');
+    setAuthLoading(true);
+
+    try {
+      if (authTab === 'register') {
+        await register(authForm.username, authForm.password, authForm.inviteCode);
+      } else {
+        await login(authForm.username, authForm.password);
+      }
+      setCurrentUser(authForm.username);
+      setAuthForm({ username: '', password: '', inviteCode: '' });
+      setAuthState('loading');
+    } catch (error) {
+      setAuthError(error.message || '操作失败');
+    } finally {
+      setAuthLoading(false);
+    }
   }
 
   function handleLogout() {
-    setAccessGranted(false);
+    clearToken();
+    setCurrentUser('');
+    setAuthState('auth-form');
     setDrawerOpen(false);
-    setStatusText('请先输入密码');
+    setStatusText('已退出登录');
   }
 
   function handleUploadClick() {
-    if (!accessGranted) {
+    if (authState !== 'authenticated') {
       return;
     }
     fileInputRef.current?.click();
@@ -633,32 +666,78 @@ export default function App() {
     setPendingImage(null);
   }
 
-  if (!accessGranted) {
+  if (authState === 'loading') {
     return (
       <div className="gate-shell">
         <section className="gate-card">
-          <div className="gate-badge">访问验证</div>
-          <h1>请输入密码</h1>
-          <p>输入正确密码后，才能使用聊天、上传图片和设置等全部功能。</p>
+          <img className="gate-logo" src="/logo-2.png" alt="" />
+          <h1>lightChat</h1>
+          <p>正在加载你的数据...</p>
+        </section>
+      </div>
+    );
+  }
 
-          <form className="gate-form" onSubmit={handlePasswordSubmit}>
+  if (authState === 'auth-form') {
+    return (
+      <div className="gate-shell">
+        <section className="gate-card">
+          <img className="gate-logo" src="/logo-2.png" alt="" />
+          <h1>lightChat</h1>
+          <p>登录或注册后，你的对话记录将自动云端同步。</p>
+
+          <div className="auth-tabs" role="tablist">
+            <button
+              className={classNames('tab-button', authTab === 'login' && 'tab-button-active')}
+              type="button"
+              onClick={() => { setAuthTab('login'); setAuthError(''); }}
+            >
+              登录
+            </button>
+            <button
+              className={classNames('tab-button', authTab === 'register' && 'tab-button-active')}
+              type="button"
+              onClick={() => { setAuthTab('register'); setAuthError(''); }}
+            >
+              注册
+            </button>
+          </div>
+
+          <form className="gate-form" onSubmit={handleAuthSubmit}>
+            <input
+              className="gate-input"
+              type="text"
+              value={authForm.username}
+              onChange={(e) => setAuthForm((f) => ({ ...f, username: e.target.value }))}
+              placeholder="用户名"
+              autoComplete="username"
+              required
+            />
             <input
               className="gate-input"
               type="password"
-              inputMode="numeric"
-              value={passwordInput}
-              onChange={(event) => {
-                setPasswordInput(event.target.value);
-                setPasswordError('');
-              }}
-              placeholder="请输入密码"
+              value={authForm.password}
+              onChange={(e) => setAuthForm((f) => ({ ...f, password: e.target.value }))}
+              placeholder="密码"
+              autoComplete={authTab === 'register' ? 'new-password' : 'current-password'}
+              required
             />
-            <button className="gate-button" type="submit">
-              进入聊天
+            {authTab === 'register' && (
+              <input
+                className="gate-input"
+                type="text"
+                value={authForm.inviteCode}
+                onChange={(e) => setAuthForm((f) => ({ ...f, inviteCode: e.target.value }))}
+                placeholder="邀请码"
+                required
+              />
+            )}
+            <button className="gate-button" type="submit" disabled={authLoading}>
+              {authLoading ? '请稍候...' : authTab === 'login' ? '登录' : '注册'}
             </button>
           </form>
 
-          {passwordError && <div className="gate-error">{passwordError}</div>}
+          {authError && <div className="gate-error">{authError}</div>}
         </section>
       </div>
     );
@@ -914,7 +993,7 @@ export default function App() {
             </label>
 
             <button className="secondary-button wide-button" type="button" onClick={handleLogout}>
-              退出并锁定
+              退出登录
             </button>
           </div>
         )}

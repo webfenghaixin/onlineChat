@@ -6,7 +6,7 @@ import {
   hashPassword,
   signJWT,
   createRedis,
-  redisGet,
+  getRedisJson,
 } from '../lib/auth-utils.js';
 
 export default async function handler(request) {
@@ -25,12 +25,13 @@ export default async function handler(request) {
 
   const { username, password } = body;
 
-  if (!username || !password) {
+  if (!username || typeof username !== 'string' || !password || typeof password !== 'string') {
     return jsonResponse(400, { error: '请输入用户名和密码' });
   }
 
-  const user = await redisGet(redis, `user:${username}`);
-  if (!user) {
+  const normalizedUsername = username.trim();
+  const user = await getRedisJson(redis, `user:${normalizedUsername}`);
+  if (!user || !user.salt || !user.passwordHash) {
     return jsonResponse(401, { error: '用户名或密码错误' });
   }
 
@@ -43,9 +44,9 @@ export default async function handler(request) {
   if (!jwtSecret) return jsonResponse(500, { error: '服务端未配置 JWT_SECRET' });
 
   const token = await signJWT(
-    { username, exp: Math.floor(Date.now() / 1000) + 30 * 24 * 3600 },
+    { username: normalizedUsername, exp: Math.floor(Date.now() / 1000) + 30 * 24 * 3600 },
     jwtSecret,
   );
 
-  return jsonResponse(200, { token, username });
+  return jsonResponse(200, { token, username: normalizedUsername });
 }

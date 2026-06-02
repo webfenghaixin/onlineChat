@@ -1,3 +1,5 @@
+import { Redis } from '@upstash/redis';
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
@@ -89,44 +91,42 @@ export function generateSalt() {
 }
 
 export function createRedis() {
-  const url = process.env.UPSTASH_REDIS_REST_URL || '';
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+  const url =
+    process.env.UPSTASH_REDIS_REST_URL ||
+    process.env.KV_REST_API_URL ||
+    process.env.REDIS_REST_URL;
+  const token =
+    process.env.UPSTASH_REDIS_REST_TOKEN ||
+    process.env.KV_REST_API_TOKEN ||
+    process.env.REDIS_REST_TOKEN;
   if (!url || !token) return null;
-  return { url, token };
+  return new Redis({ url, token });
 }
 
-export async function redisGet(redis, key) {
-  const res = await fetch(redis.url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${redis.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify([['GET', key]]),
-  });
-  const json = await res.json();
-  const result = Array.isArray(json.result) ? json.result[0] : json.result;
-  if (result === null || result === undefined) return null;
-  if (typeof result === 'string') {
+export function parseRedisJson(value) {
+  if (value == null || value === '') return null;
+
+  if (typeof value === 'string') {
     try {
-      return JSON.parse(result);
+      return parseRedisJson(JSON.parse(value));
     } catch {
-      return result;
+      return null;
     }
   }
-  return result;
+
+  return value;
 }
 
-export async function redisSet(redis, key, value) {
-  const res = await fetch(redis.url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${redis.token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify([['SET', key, JSON.stringify(value)]]),
-  });
-  await res.json();
+export async function getRedisJson(redis, key) {
+  return parseRedisJson(await redis.get(key));
+}
+
+export async function setRedisJson(redis, key, value) {
+  await redis.set(key, JSON.stringify(value));
+}
+
+export async function setRedisJsonNx(redis, key, value) {
+  return redis.set(key, JSON.stringify(value), { nx: true });
 }
 
 export async function authenticate(request) {
@@ -138,7 +138,9 @@ export async function authenticate(request) {
   if (!jwtSecret) return { error: jsonResponse(500, { error: '服务端未配置 JWT_SECRET' }) };
 
   const payload = await verifyJWT(token, jwtSecret);
-  if (!payload || !payload.username) return { error: jsonResponse(401, { error: '登录已过期，请重新登录' }) };
+  if (!payload || !payload.username) {
+    return { error: jsonResponse(401, { error: '登录已过期，请重新登录' }) };
+  }
 
   return { username: payload.username };
 }

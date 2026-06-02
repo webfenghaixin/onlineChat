@@ -139,11 +139,25 @@ function createProxyPlugin(env) {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
+  const apiTarget = env.VITE_API_TARGET || 'https://www.lightchat.online';
+
   return {
     base: './',
     plugins: [react(), createProxyPlugin(env)],
     server: {
       host: true,
+      proxy: {
+        '/api/auth': {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: true,
+        },
+        '/api/data': {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: true,
+        },
+      },
     },
     build: {
       rollupOptions: {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { marked } from 'marked';
 import { streamChatCompletion } from './lib/stream';
 
 const STORAGE_KEY = 'online-chat-h5-state-v4';
@@ -16,6 +17,16 @@ const SOURCE_OPTIONS = [
   { value: 'luxee', label: 'Luxee' },
   { value: 'rightcode', label: 'RightCode' },
 ];
+
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  return marked.parse(text);
+}
 
 const defaultSettings = {
   source: 'rightcode',
@@ -873,7 +884,16 @@ export default function App() {
                     </div>
                   )}
 
-                  {text || (isLatestAssistant ? '正在思考...' : '')}
+                  {isAssistant ? (
+                    <div
+                      className="markdown-body"
+                      dangerouslySetInnerHTML={{
+                        __html: renderMarkdown(text || (isLatestAssistant ? '正在思考...' : '')),
+                      }}
+                    />
+                  ) : (
+                    text
+                  )}
                   {isLatestAssistant && <span className="typing-cursor" />}
                 </div>
 

@@ -205,7 +205,7 @@ button:disabled {
 
 .chat-header {
   display: grid;
-  grid-template-columns: 46px 1fr 46px;
+  grid-template-columns: 46px 1fr;
   align-items: center;
   gap: 10px;
   padding: calc(12px + env(safe-area-inset-top)) 14px 12px;
@@ -237,6 +237,18 @@ button:disabled {
 .chat-title {
   min-width: 0;
   text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.header-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 
 .chat-title h1 {
@@ -272,18 +284,98 @@ button:disabled {
   animation: pulse 1.15s ease-in-out infinite;
 }
 
+.message-list-wrapper {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+
 .message-list {
   min-height: 0;
+  flex: 1;
   overflow-y: auto;
   padding: 18px 14px 28px;
   scroll-behavior: smooth;
 }
 
-.message-list::-webkit-scrollbar,
-.settings-form::-webkit-scrollbar,
-.history-list::-webkit-scrollbar {
+.message-list::-webkit-scrollbar {
   width: 0;
   height: 0;
+}
+
+.message-list {
+  scrollbar-width: none;
+}
+
+.settings-form::-webkit-scrollbar,
+.history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.settings-form::-webkit-scrollbar-track,
+.history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-form::-webkit-scrollbar-thumb,
+.history-list::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: rgba(17, 97, 92, 0.22);
+}
+
+.settings-form::-webkit-scrollbar-thumb:hover,
+.history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(17, 97, 92, 0.4);
+}
+
+.settings-form {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(17, 97, 92, 0.22) transparent;
+}
+
+.history-list {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(17, 97, 92, 0.22) transparent;
+}
+
+.custom-scrollbar-track {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.custom-scrollbar-track-visible {
+  opacity: 1;
+}
+
+.custom-scrollbar-thumb {
+  position: absolute;
+  left: 6px;
+  width: 8px;
+  border-radius: 4px;
+  background: rgba(17, 97, 92, 0.25);
+  transition: background 0.15s ease, width 0.15s ease, left 0.15s ease;
+  cursor: grab;
+  touch-action: none;
+}
+
+.custom-scrollbar-thumb:hover {
+  background: rgba(17, 97, 92, 0.4);
+  left: 4px;
+  width: 12px;
+}
+
+.custom-scrollbar-thumb-active {
+  background: rgba(17, 97, 92, 0.55);
+  left: 2px;
+  width: 16px;
+  cursor: grabbing;
 }
 
 .welcome-panel {
@@ -729,6 +821,20 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.drawer-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.drawer-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 
 .drawer-kicker {

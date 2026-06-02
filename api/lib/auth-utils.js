@@ -96,23 +96,37 @@ export function createRedis() {
 }
 
 export async function redisGet(redis, key) {
-  const res = await fetch(`${redis.url}/get/${encodeURIComponent(key)}`, {
-    headers: { Authorization: `Bearer ${redis.token}` },
-  });
-  const json = await res.json();
-  if (json.result === null) return null;
-  return typeof json.result === 'string' ? JSON.parse(json.result) : json.result;
-}
-
-export async function redisSet(redis, key, value) {
-  await fetch(`${redis.url}/set/${encodeURIComponent(key)}`, {
+  const res = await fetch(redis.url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${redis.token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(JSON.stringify(value)),
+    body: JSON.stringify([['GET', key]]),
   });
+  const json = await res.json();
+  const result = Array.isArray(json.result) ? json.result[0] : json.result;
+  if (result === null || result === undefined) return null;
+  if (typeof result === 'string') {
+    try {
+      return JSON.parse(result);
+    } catch {
+      return result;
+    }
+  }
+  return result;
+}
+
+export async function redisSet(redis, key, value) {
+  const res = await fetch(redis.url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${redis.token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify([['SET', key, JSON.stringify(value)]]),
+  });
+  await res.json();
 }
 
 export async function authenticate(request) {

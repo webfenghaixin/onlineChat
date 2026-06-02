@@ -5,7 +5,7 @@ import {
   handleOptions,
   authenticate,
   createRedis,
-  redisGet,
+  getRedisJson,
 } from '../lib/auth-utils.js';
 
 export default async function handler(request) {
@@ -18,7 +18,7 @@ export default async function handler(request) {
   const auth = await authenticate(request);
   if (auth.error) return auth.error;
 
-  const data = await redisGet(redis, `data:${auth.username}`);
+  const data = await getRedisJson(redis, `data:${auth.username}`);
   if (!data) {
     return jsonResponse(200, { conversations: [], settings: null, activeConversationId: null });
   }

@@ -7,8 +7,8 @@ import {
   generateSalt,
   signJWT,
   createRedis,
-  redisGet,
-  redisSet,
+  setRedisJsonNx,
+  getRedisJson,
 } from '../lib/auth-utils.js';
 
 export default async function handler(request) {
@@ -26,13 +26,14 @@ export default async function handler(request) {
   }
 
   const { username, password, inviteCode } = body;
+  const normalizedUsername = typeof username === 'string' ? username.trim() : '';
 
-  if (!username || typeof username !== 'string' || !/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
-    return jsonResponse(400, { error: '用户名需要3-20位字母、数字或下划线' });
+  if (!normalizedUsername || !/^[a-zA-Z0-9_]{3,20}$/.test(normalizedUsername)) {
+    return jsonResponse(400, { error: '用户名需要 3-20 位字母、数字或下划线' });
   }
 
   if (!password || typeof password !== 'string' || password.length < 6) {
-    return jsonResponse(400, { error: '密码长度至少6个字符' });
+    return jsonResponse(400, { error: '密码长度至少 6 个字符' });
   }
 
   const validInviteCode = process.env.INVITE_CODE || '';
@@ -40,27 +41,32 @@ export default async function handler(request) {
     return jsonResponse(400, { error: '邀请码不正确' });
   }
 
-  const existingUser = await redisGet(redis, `user:${username}`);
-  if (existingUser) {
-    return jsonResponse(409, { error: '用户名已存在' });
-  }
-
   const salt = generateSalt();
   const passwordHash = await hashPassword(password, salt);
-
-  await redisSet(redis, `user:${username}`, {
+  const userKey = `user:${normalizedUsername}`;
+  const userRecord = {
     salt,
     passwordHash,
     createdAt: Date.now(),
-  });
+  };
+
+  const setResult = await setRedisJsonNx(redis, userKey, userRecord);
+  if (!setResult) {
+    return jsonResponse(409, { error: '用户名已存在' });
+  }
+
+  const savedUser = await getRedisJson(redis, userKey);
+  if (!savedUser || savedUser.passwordHash !== passwordHash) {
+    return jsonResponse(500, { error: '用户写入数据库失败，请检查 Redis 配置' });
+  }
 
   const jwtSecret = process.env.JWT_SECRET || '';
   if (!jwtSecret) return jsonResponse(500, { error: '服务端未配置 JWT_SECRET' });
 
   const token = await signJWT(
-    { username, exp: Math.floor(Date.now() / 1000) + 30 * 24 * 3600 },
+    { username: normalizedUsername, exp: Math.floor(Date.now() / 1000) + 30 * 24 * 3600 },
     jwtSecret,
   );
 
-  return jsonResponse(200, { token, username });
+  return jsonResponse(200, { token, username: normalizedUsername });
 }

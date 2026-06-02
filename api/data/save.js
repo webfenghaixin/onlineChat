@@ -5,7 +5,7 @@ import {
   handleOptions,
   authenticate,
   createRedis,
-  redisSet,
+  setRedisJson,
 } from '../lib/auth-utils.js';
 
 export default async function handler(request) {
@@ -31,7 +31,7 @@ export default async function handler(request) {
     return jsonResponse(400, { error: '数据格式错误' });
   }
 
-  await redisSet(redis, `data:${auth.username}`, {
+  await setRedisJson(redis, `data:${auth.username}`, {
     conversations,
     settings,
     activeConversationId,

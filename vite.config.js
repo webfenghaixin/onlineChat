@@ -8,7 +8,10 @@ const SOURCE_ENV_MAP = {
   },
   rightcode: {
     key: 'API_KEY_RIGHTCODE',
-    endpoint: 'https://www.right.codes/codex/v1/chat/completions',
+    endpoint: 'https://www.right.codes/codex-pro/v1/chat/completions',
+    pricing: {
+      daily: 'https://www.right.codes/codex/v1/responses',
+    },
   },
 };
 
@@ -20,7 +23,7 @@ function createProxyPlugin(env) {
         if (req.method === 'OPTIONS') {
           res.statusCode = 204;
           res.setHeader('Access-Control-Allow-Origin', '*');
-          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Source');
+          res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Source, X-Pricing');
           res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
           res.end();
           return;
@@ -34,6 +37,7 @@ function createProxyPlugin(env) {
         }
 
         const source = ((req.headers['x-source'] || 'luxee') + '').toLowerCase();
+        const pricing = ((req.headers['x-pricing'] || '') + '').toLowerCase();
         const sourceConfig = SOURCE_ENV_MAP[source];
 
         if (!sourceConfig) {
@@ -44,7 +48,12 @@ function createProxyPlugin(env) {
         }
 
         const serverApiKey = env[sourceConfig.key] || '';
-        const serverEndpoint = sourceConfig.endpoint || '';
+        let serverEndpoint = '';
+        if (pricing && sourceConfig.pricing && sourceConfig.pricing[pricing]) {
+          serverEndpoint = sourceConfig.pricing[pricing];
+        } else {
+          serverEndpoint = sourceConfig.endpoint || '';
+        }
 
         if (!serverEndpoint) {
           res.statusCode = 500;

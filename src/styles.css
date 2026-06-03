@@ -14,6 +14,7 @@
   --quiet: #8a9498;
   --line: rgba(40, 68, 72, 0.12);
   --brand: #11615c;
+  --brand: #54c9bf;
   --brand-strong: #0b4542;
   --accent: #d88239;
   --danger: #c43d32;
@@ -81,16 +82,30 @@ button:disabled {
   display: grid;
   place-items: center;
   padding: 24px;
+  background: url('/h5-bg.png') no-repeat center center;
+  background-size: cover;
+  /* background: linear-gradient(-45deg, #0d9488, #0891b2, #2563eb, #06b6d4, #14b8a6);
+  background-size: 400% 400%;
+  animation: gateGradient 12s ease infinite; */
+}
+
+@keyframes gateGradient {
+  0% { background-position: 0% 50%; }
+  25% { background-position: 100% 0%; }
+  50% { background-position: 100% 50%; }
+  75% { background-position: 0% 100%; }
+  100% { background-position: 0% 50%; }
 }
 
 .gate-card {
   width: min(100%, 420px);
   padding: 28px 22px;
   border-radius: 28px;
-  background: rgba(255, 255, 252, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 252, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.65);
   box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
 }
 
 .gate-logo {
@@ -209,6 +224,7 @@ button:disabled {
   border: 1px solid rgba(255, 255, 255, 0.8);
   border-radius: 28px;
   box-shadow: var(--shadow-soft);
+  -webkit-backdrop-filter: blur(22px);
   backdrop-filter: blur(22px);
 }
 
@@ -463,6 +479,14 @@ button:disabled {
 .message-meta span {
   color: var(--muted);
   font-weight: 800;
+}
+
+.message-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
 }
 
 .message-bubble {
@@ -822,6 +846,7 @@ button:disabled {
   inset: 0;
   z-index: 20;
   background: rgba(14, 25, 28, 0.34);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 
@@ -1030,6 +1055,16 @@ button:disabled {
 }
 
 @media (max-width: 560px) {
+  .pc-only {
+    display: none !important;
+  }
+
+  .gate-card {
+    position: absolute;
+    top: 41%;
+    width: 95%;
+  }
+
   .chat-app {
     display: block;
     padding: 0;

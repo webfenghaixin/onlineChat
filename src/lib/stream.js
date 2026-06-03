@@ -147,28 +147,23 @@ function buildMessagesPayload(messages, systemPrompt) {
 }
 
 function buildRequestBody(settings, messages) {
-  const { requestMode, model, temperature, maxOutputTokens, stream, systemPrompt } = settings;
+  const { model, temperature, maxOutputTokens, stream, systemPrompt } = settings;
   const normalizedMessages = buildMessagesPayload(messages, systemPrompt);
+  const isDaily = settings.source === 'rightcode' && settings.rightcodePricing === 'daily';
 
-  if (requestMode === 'responses') {
+  if (isDaily) {
     return {
       model: model || undefined,
-      input: normalizedMessages.map((message) => ({
-        role: message.role,
-        content: message.content.map((item) => {
-          if (item.type === 'image_url') {
-            return {
-              type: 'input_image',
-              image_url: item.image_url?.url || '',
-            };
-          }
-
-          return {
-            type: 'input_text',
-            text: item.text || '',
-          };
-        }),
-      })),
+      input: normalizedMessages.map((message) => {
+        const text = message.content
+          .filter((item) => item.type === 'text')
+          .map((item) => item.text || '')
+          .join('\n');
+        return {
+          role: message.role,
+          content: text,
+        };
+      }),
       temperature,
       max_output_tokens: Number(maxOutputTokens) || undefined,
       stream,
@@ -219,6 +214,9 @@ function buildRequestHeaders(settings) {
 
   if (settings.useProxy) {
     headers['X-Source'] = settings.source || 'luxee';
+    if (settings.source === 'rightcode' && settings.rightcodePricing) {
+      headers['X-Pricing'] = settings.rightcodePricing;
+    }
   } else {
     if (settings.apiKey.trim()) {
       headers.Authorization = `Bearer ${settings.apiKey.trim()}`;

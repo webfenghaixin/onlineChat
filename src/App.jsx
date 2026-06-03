@@ -376,6 +376,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    function onViewportResize() {
+      const app = document.querySelector('.chat-app');
+      if (!app) return;
+      // 当虚拟键盘弹出时，visualViewport.height 会变小
+      // 使用 visualViewport 的高度来确保布局正确
+      app.style.height = `${vv.height}px`;
+    }
+
+    onViewportResize();
+    vv.addEventListener('resize', onViewportResize);
+    vv.addEventListener('scroll', onViewportResize);
+    return () => {
+      vv.removeEventListener('resize', onViewportResize);
+      vv.removeEventListener('scroll', onViewportResize);
+    };
+  }, []);
+
+  useEffect(() => {
     const composer = composerRef.current;
     if (!composer) {
       return;
@@ -453,6 +474,25 @@ export default function App() {
     setStatusText('已停止生成');
   }
 
+  function retryMessage(message) {
+    const messageIndex = activeMessages.findIndex((m) => m.id === message.id);
+    if (messageIndex < 1) return;
+    const userMessage = activeMessages[messageIndex - 1];
+    if (userMessage?.role !== 'user') return;
+    const userText = getTextParts(userMessage.content).trim();
+    const userImages = getImageParts(userMessage.content);
+    if (!userText && !userImages.length) return;
+
+    // 移除失败的 assistant 消息和对应的 user 消息
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      messages: conversation.messages.filter((m) => m.id !== message.id && m.id !== userMessage.id),
+    }));
+
+    // 用原始内容重新发送
+    sendMessage(userMessage.content);
+  }
+
   async function copyMessage(message) {
     const text = buildCopyText(message);
     if (!text) {
@@ -518,6 +558,7 @@ export default function App() {
     setErrorText('');
     setIsSending(true);
     setStatusText('正在回复');
+    composerRef.current?.blur();
 
     updateConversation(activeConversation.id, (conversation) => ({
       ...conversation,
@@ -1102,17 +1143,29 @@ export default function App() {
                     {isLatestAssistant && <span className="typing-cursor" />}
                   </div>
 
-                  {isAssistant && (
-                    <div className="message-tools">
+                  <div className={classNames('message-tools', message.role === 'user' && 'message-tools-user')}>
+                    {isAssistant && text.startsWith('出错了') && !isSending && (
                       <button
                         type="button"
-                        className={classNames('tool-button', copiedMessageId === message.id && 'tool-button-copied')}
-                        onClick={() => copyMessage(message)}
+                        className="tool-button tool-button-retry"
+                        onClick={() => retryMessage(message)}
                       >
-                        {copiedMessageId === message.id ? '已复制 ✓' : '复制'}
+                        重新提问
                       </button>
-                    </div>
-                  )}
+                    )}
+                    <button
+                      type="button"
+                      className={classNames('tool-button tool-button-icon', copiedMessageId === message.id && 'tool-button-copied', message.role === 'user' && 'tool-button-user')}
+                      onClick={() => copyMessage(message)}
+                      aria-label="复制"
+                    >
+                      {copiedMessageId === message.id ? (
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" /></svg>
+                      )}
+                    </button>
+                  </div>
                 </article>
               );
             })}

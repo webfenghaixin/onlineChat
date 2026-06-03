@@ -17,6 +17,18 @@ const SOURCE_OPTIONS = [
   { value: 'rightcode', label: 'RightCode' },
 ];
 
+const RIGHTCODE_PRICING_OPTIONS = [
+  { value: 'regular', label: '正价' },
+  { value: 'daily', label: '日抛' },
+];
+
+const MODEL_OPTIONS = [
+  { value: 'gpt-5.5', label: 'GPT-5.5' },
+  { value: 'gpt-5.4', label: 'GPT-5.4' },
+  { value: 'gpt-5.4-medium', label: 'GPT-5.4-Medium' },
+  { value: 'gpt-5.4-high', label: 'GPT-5.4-High' },
+];
+
 marked.setOptions({
   breaks: true,
   gfm: true,
@@ -29,6 +41,7 @@ function renderMarkdown(text) {
 
 const defaultSettings = {
   source: 'rightcode',
+  rightcodePricing: 'regular',
   endpoint: '',
   apiKey: '',
   model: 'gpt-5.4',
@@ -670,8 +683,8 @@ export default function App() {
     return (
       <div className="gate-shell">
         <section className="gate-card">
-          <img className="gate-logo" src="/logo-2.png" alt="" />
-          <h1>lightChat</h1>
+          {/* <img className="gate-logo" src="/logo-2.png" alt="" />
+          <h1>lightChat</h1> */}
           <p>正在加载你的数据...</p>
         </section>
       </div>
@@ -682,9 +695,8 @@ export default function App() {
     return (
       <div className="gate-shell">
         <section className="gate-card">
-          <img className="gate-logo" src="/logo-2.png" alt="" />
-          <h1>lightChat</h1>
-          <p>登录或注册后，你的对话记录将自动云端同步。</p>
+          <img className="gate-logo pc-only" src="/logo-2.png" alt="" />
+          <h1 className="pc-only" style={{ textAlign: 'center', marginBottom: 24 }}>lightChat</h1>
 
           <div className="auth-tabs" role="tablist">
             <button
@@ -855,6 +867,29 @@ export default function App() {
               </select>
             </label>
 
+            {settings.source === 'rightcode' && (
+              <label className="field">
+                <span className="field-label">计费方式</span>
+                <select
+                  className="field-input"
+                  value={settings.rightcodePricing || 'regular'}
+                  onChange={(event) => {
+                    const pricing = event.target.value;
+                    setSettings((current) => ({
+                      ...current,
+                      rightcodePricing: pricing,
+                    }));
+                  }}
+                >
+                  {RIGHTCODE_PRICING_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             {!settings.useProxy && (
               <>
                 <label className="field">
@@ -885,27 +920,18 @@ export default function App() {
 
             <label className="field">
               <span className="field-label">模型名</span>
-              <input
+              <select
                 className="field-input"
                 value={settings.model}
                 onChange={(event) =>
                   setSettings((current) => ({ ...current, model: event.target.value }))
                 }
-                placeholder="如接口本身已固定模型，可留空"
-              />
-            </label>
-
-            <label className="field">
-              <span className="field-label">请求模式</span>
-              <select
-                className="field-input"
-                value={settings.requestMode}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, requestMode: event.target.value }))
-                }
               >
-                <option value="chat">OpenAI Chat Completions 兼容</option>
-                <option value="responses">OpenAI Responses 兼容</option>
+                {MODEL_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </label>
 
@@ -1044,6 +1070,7 @@ export default function App() {
                   )}
                 >
                   <div className="message-meta">
+                    {isAssistant && <img className="message-avatar" src="/logo-2.png" alt="" />}
                     <span>{message.role === 'user' ? '我' : 'AI'}</span>
                     <time>{formatTime(message.createdAt || Date.now())}</time>
                   </div>

@@ -4,7 +4,7 @@ export const config = {
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Source',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Source, X-Pricing',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -16,6 +16,9 @@ const SOURCE_ENV_MAP = {
   rightcode: {
     key: 'API_KEY_RIGHTCODE',
     endpoint: 'https://www.right.codes/codex-pro/v1/chat/completions',
+    pricing: {
+      daily: 'https://www.right.codes/codex/v1/responses',
+    },
   },
 };
 
@@ -40,6 +43,7 @@ export default async function handler(request) {
   }
 
   const source = (request.headers.get('x-source') || 'luxee').toLowerCase();
+  const pricing = (request.headers.get('x-pricing') || '').toLowerCase();
   const sourceConfig = SOURCE_ENV_MAP[source];
 
   if (!sourceConfig) {
@@ -47,7 +51,12 @@ export default async function handler(request) {
   }
 
   const serverApiKey = process.env[sourceConfig.key] || '';
-  const serverEndpoint = sourceConfig.endpoint || '';
+  let serverEndpoint = '';
+  if (pricing && sourceConfig.pricing && sourceConfig.pricing[pricing]) {
+    serverEndpoint = sourceConfig.pricing[pricing];
+  } else {
+    serverEndpoint = sourceConfig.endpoint || '';
+  }
 
   if (!serverEndpoint) {
     return jsonResponse(500, { error: `Server endpoint not configured for source: ${source}.` });

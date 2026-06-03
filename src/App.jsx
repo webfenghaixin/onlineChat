@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { streamChatCompletion } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername } from './lib/auth';
@@ -34,9 +34,20 @@ marked.setOptions({
   gfm: true,
 });
 
+const markdownCache = new Map();
+const MARKDOWN_CACHE_MAX = 200;
+
 function renderMarkdown(text) {
   if (!text) return '';
-  return marked.parse(text);
+  const cached = markdownCache.get(text);
+  if (cached !== undefined) return cached;
+  const html = marked.parse(text);
+  if (markdownCache.size >= MARKDOWN_CACHE_MAX) {
+    const firstKey = markdownCache.keys().next().value;
+    markdownCache.delete(firstKey);
+  }
+  markdownCache.set(text, html);
+  return html;
 }
 
 const defaultSettings = {
@@ -295,6 +306,85 @@ function Scrollbar({ scrollRef }) {
   );
 }
 
+const MessageRow = memo(function MessageRow({
+  message,
+  isLatestAssistant,
+  isSending,
+  copiedMessageId,
+  onCopy,
+  onRetry,
+}) {
+  const images = getImageParts(message.content);
+  const text = getTextParts(message.content);
+  const isAssistant = message.role === 'assistant';
+
+  return (
+    <article
+      className={classNames(
+        'message-row',
+        message.role === 'user' ? 'message-user' : 'message-assistant',
+      )}
+    >
+      <div className="message-meta">
+        {isAssistant && <img className="message-avatar" src="/logo-2.png" alt="" />}
+        <span>{message.role === 'user' ? '我' : 'AI'}</span>
+        <time>{formatTime(message.createdAt || Date.now())}</time>
+      </div>
+
+      <div className="message-bubble">
+        {images.length > 0 && (
+          <div className="message-images">
+            {images.map((image) => (
+              <img
+                key={image.image_url.url}
+                className="message-image"
+                src={image.image_url.url}
+                alt="上传图片"
+              />
+            ))}
+          </div>
+        )}
+
+        {isAssistant ? (
+          <div
+            className="markdown-body"
+            dangerouslySetInnerHTML={{
+              __html: renderMarkdown(text || (isLatestAssistant ? '正在思考...' : '')),
+            }}
+          />
+        ) : (
+          text
+        )}
+        {isLatestAssistant && <span className="typing-cursor" />}
+      </div>
+
+      <div className={classNames('message-tools', message.role === 'user' && 'message-tools-user')}>
+        {isAssistant && text.startsWith('出错了') && !isSending && (
+          <button
+            type="button"
+            className="tool-button tool-button-retry"
+            onClick={() => onRetry(message)}
+          >
+            重新提问
+          </button>
+        )}
+        <button
+          type="button"
+          className={classNames('tool-button tool-button-icon', copiedMessageId === message.id && 'tool-button-copied', message.role === 'user' && 'tool-button-user')}
+          onClick={() => onCopy(message)}
+          aria-label="复制"
+        >
+          {copiedMessageId === message.id ? (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" /></svg>
+          )}
+        </button>
+      </div>
+    </article>
+  );
+});
+
 export default function App() {
   const loadedState = useMemo(() => loadState(), []);
   const [settings, setSettings] = useState(loadedState.settings);
@@ -307,6 +397,9 @@ export default function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState('history');
   const [copiedMessageId, setCopiedMessageId] = useState('');
+  const [visibleMessageCount, setVisibleMessageCount] = useState(50);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showCompleteHint, setShowCompleteHint] = useState(false);
   const [authState, setAuthState] = useState(() => (getToken() ? 'loading' : 'auth-form'));
   const [authTab, setAuthTab] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', inviteCode: '' });
@@ -329,6 +422,18 @@ export default function App() {
   const hasUserMessages = activeMessages.some((message) => message.role === 'user');
   const draftHasText = draft.trim().length > 0;
   const canSend = (draftHasText || Boolean(pendingImage)) && !isSending && authState === 'authenticated';
+
+  // 切换对话时重置可见消息数
+  useEffect(() => {
+    setVisibleMessageCount(50);
+  }, [activeConversationId]);
+
+  // 实际渲染的消息：取最后 visibleMessageCount 条
+  const visibleMessages = useMemo(() => {
+    if (activeMessages.length <= visibleMessageCount) return activeMessages;
+    return activeMessages.slice(-visibleMessageCount);
+  }, [activeMessages, visibleMessageCount]);
+  const hasMoreMessages = activeMessages.length > visibleMessageCount;
 
   useEffect(() => {
     saveState({
@@ -365,9 +470,35 @@ export default function App() {
     return () => { cancelled = true; };
   }, [authState]);
 
-  useEffect(() => {
+  // 判断是否在底部（阈值 60px）
+  const checkIsAtBottom = useCallback(() => {
+    const el = messageListRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  }, []);
+
+  // 滚动到底部
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [activeMessages, drawerOpen, drawerTab]);
+  }, []);
+
+  // 监听滚动位置
+  useEffect(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      setIsAtBottom(checkIsAtBottom());
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [checkIsAtBottom]);
+
+  // 智能滚动：用户在底部时跟随新消息，不在底部时不强制
+  useEffect(() => {
+    if (isAtBottom) {
+      scrollToBottom();
+    }
+  }, [activeMessages, drawerOpen, drawerTab, isAtBottom, scrollToBottom]);
 
   useEffect(() => {
     return () => {
@@ -626,6 +757,9 @@ export default function App() {
     } finally {
       abortControllerRef.current = null;
       setIsSending(false);
+      // 回答完成提示
+      setShowCompleteHint(true);
+      setTimeout(() => setShowCompleteHint(false), 3000);
     }
   }
 
@@ -1093,85 +1227,48 @@ export default function App() {
 
         <div className="message-list-wrapper">
           <section className="message-list" ref={messageListRef} aria-live="polite">
-            {activeMessages.map((message) => {
-              const isLatestAssistant =
-                isSending &&
-                message.role === 'assistant' &&
-                message === activeMessages[activeMessages.length - 1];
-              const images = getImageParts(message.content);
-              const text = getTextParts(message.content);
-              const isAssistant = message.role === 'assistant';
-
-              return (
-                <article
-                  key={message.id}
-                  className={classNames(
-                    'message-row',
-                    message.role === 'user' ? 'message-user' : 'message-assistant',
-                  )}
+            {hasMoreMessages && (
+              <div className="load-more-bar">
+                <button
+                  type="button"
+                  className="load-more-button"
+                  onClick={() => setVisibleMessageCount((c) => c + 50)}
                 >
-                  <div className="message-meta">
-                    {isAssistant && <img className="message-avatar" src="/logo-2.png" alt="" />}
-                    <span>{message.role === 'user' ? '我' : 'AI'}</span>
-                    <time>{formatTime(message.createdAt || Date.now())}</time>
-                  </div>
-
-                  <div className="message-bubble">
-                    {images.length > 0 && (
-                      <div className="message-images">
-                        {images.map((image) => (
-                          <img
-                            key={image.image_url.url}
-                            className="message-image"
-                            src={image.image_url.url}
-                            alt="上传图片"
-                          />
-                        ))}
-                      </div>
-                    )}
-
-                    {isAssistant ? (
-                      <div
-                        className="markdown-body"
-                        dangerouslySetInnerHTML={{
-                          __html: renderMarkdown(text || (isLatestAssistant ? '正在思考...' : '')),
-                        }}
-                      />
-                    ) : (
-                      text
-                    )}
-                    {isLatestAssistant && <span className="typing-cursor" />}
-                  </div>
-
-                  <div className={classNames('message-tools', message.role === 'user' && 'message-tools-user')}>
-                    {isAssistant && text.startsWith('出错了') && !isSending && (
-                      <button
-                        type="button"
-                        className="tool-button tool-button-retry"
-                        onClick={() => retryMessage(message)}
-                      >
-                        重新提问
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className={classNames('tool-button tool-button-icon', copiedMessageId === message.id && 'tool-button-copied', message.role === 'user' && 'tool-button-user')}
-                      onClick={() => copyMessage(message)}
-                      aria-label="复制"
-                    >
-                      {copiedMessageId === message.id ? (
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
-                      ) : (
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" /></svg>
-                      )}
-                    </button>
-                  </div>
-                </article>
-              );
-            })}
+                  加载更早消息（还有 {activeMessages.length - visibleMessageCount} 条）
+                </button>
+              </div>
+            )}
+            {visibleMessages.map((message) => (
+              <MessageRow
+                key={message.id}
+                message={message}
+                isLatestAssistant={
+                  isSending &&
+                  message.role === 'assistant' &&
+                  message === activeMessages[activeMessages.length - 1]
+                }
+                isSending={isSending}
+                copiedMessageId={copiedMessageId}
+                onCopy={copyMessage}
+                onRetry={retryMessage}
+              />
+            ))}
             <div ref={messagesEndRef} />
+            {showCompleteHint && !isSending && (
+              <div className="complete-hint">回答完成</div>
+            )}
           </section>
           <Scrollbar scrollRef={messageListRef} />
+          {!isAtBottom && (
+            <button
+              type="button"
+              className="scroll-to-bottom-button"
+              onClick={scrollToBottom}
+              aria-label="滚动到底部"
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 12 10 17 15 12" /><line x1="10" y1="3" x2="10" y2="17" /></svg>
+            </button>
+          )}
         </div>
 
         <footer className="composer-panel">

@@ -1062,6 +1062,8 @@ button:disabled {
   .gate-card {
     position: absolute;
     top: 41%;
+    left: 50%;
+    transform: translateX(-50%);
     width: 95%;
   }
 

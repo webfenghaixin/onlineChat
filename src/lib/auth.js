@@ -80,6 +80,8 @@ export async function saveToCloud(state) {
       conversations: state.conversations,
       settings: state.settings,
       activeConversationId: state.activeConversationId,
+      drawConversations: state.drawConversations,
+      activeDrawConversationId: state.activeDrawConversationId,
     }),
   });
 }

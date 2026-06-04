@@ -25,7 +25,7 @@ export default async function handler(request) {
     return jsonResponse(400, { error: '请求格式错误' });
   }
 
-  const { conversations, settings, activeConversationId } = body;
+  const { conversations, settings, activeConversationId, drawConversations, activeDrawConversationId } = body;
 
   if (!Array.isArray(conversations) || !settings) {
     return jsonResponse(400, { error: '数据格式错误' });
@@ -35,6 +35,8 @@ export default async function handler(request) {
     conversations,
     settings,
     activeConversationId,
+    drawConversations: drawConversations || [],
+    activeDrawConversationId: activeDrawConversationId || null,
     updatedAt: Date.now(),
   });
 

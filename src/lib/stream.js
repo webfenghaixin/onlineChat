@@ -428,13 +428,25 @@ function extractImageUrlFromContent(content) {
   return null;
 }
 
-export async function generateImage({ settings, prompt, size, quality, signal, onImage }) {
+export async function generateImage({ settings, prompt, referenceImage, size, quality, signal, onImage }) {
   const url = resolveDrawProxyUrl(settings);
 
-  // 使用 chat completions 格式
+  // 构建 user content：图生图时用数组格式，纯文生图用字符串
   const sizeHint = size ? `，图片尺寸${size}` : '';
   const qualityHint = quality ? `，画质${quality}` : '';
-  const userContent = `请根据以下描述生成图片：${prompt}${sizeHint}${qualityHint}`;
+  const textPart = referenceImage
+    ? `请参考这张图片，${prompt}${sizeHint}${qualityHint}`
+    : `请根据以下描述生成图片：${prompt}${sizeHint}${qualityHint}`;
+
+  let userContent;
+  if (referenceImage) {
+    userContent = [
+      { type: 'text', text: textPart },
+      { type: 'image_url', image_url: { url: referenceImage } },
+    ];
+  } else {
+    userContent = textPart;
+  }
 
   const body = JSON.stringify({
     model: 'gpt-image-2',

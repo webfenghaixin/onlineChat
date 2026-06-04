@@ -20,12 +20,14 @@ export default async function handler(request) {
 
   const data = await getRedisJson(redis, `data:${auth.username}`);
   if (!data) {
-    return jsonResponse(200, { conversations: [], settings: null, activeConversationId: null });
+    return jsonResponse(200, { conversations: [], settings: null, activeConversationId: null, drawConversations: [], activeDrawConversationId: null });
   }
 
   return jsonResponse(200, {
     conversations: data.conversations || [],
     settings: data.settings || null,
     activeConversationId: data.activeConversationId || null,
+    drawConversations: data.drawConversations || [],
+    activeDrawConversationId: data.activeDrawConversationId || null,
   });
 }

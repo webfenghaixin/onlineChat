@@ -3,7 +3,7 @@ import { marked } from 'marked';
 import { streamChatCompletion, generateImage } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername } from './lib/auth';
 
-const STORAGE_KEY = 'online-chat-h5-state-v6';
+const STORAGE_KEY = 'online-chat-h5-state-v7';
 const VITE_INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
 const MAX_COMPOSER_HEIGHT = 140;
 const FONT_SIZE_OPTIONS = [
@@ -125,6 +125,16 @@ function createConversation() {
   };
 }
 
+function createDrawConversation() {
+  const now = Date.now();
+  return {
+    id: crypto.randomUUID(),
+    title: '新的画图',
+    updatedAt: now,
+    messages: [],
+  };
+}
+
 function normalizeMessage(message, fallbackTimestamp) {
   const rawContent = Array.isArray(message?.content)
     ? message.content
@@ -149,6 +159,11 @@ function normalizeState(parsed) {
         }))
       : [initialConversation];
 
+  const drawConversations =
+    Array.isArray(parsed?.drawConversations) && parsed.drawConversations.length
+      ? parsed.drawConversations
+      : [];
+
   return {
     settings: {
       ...defaultSettings,
@@ -156,6 +171,8 @@ function normalizeState(parsed) {
     },
     conversations,
     activeConversationId: parsed?.activeConversationId || conversations[0].id,
+    drawConversations,
+    activeDrawConversationId: parsed?.activeDrawConversationId || (drawConversations[0]?.id ?? null),
   };
 }
 
@@ -424,8 +441,11 @@ export default function App() {
   const [drawMode, setDrawMode] = useState(false);
   const [drawPrompt, setDrawPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generatedImage, setGeneratedImage] = useState(null);
-  const [drawHistory, setDrawHistory] = useState([]);
+  const [drawConversations, setDrawConversations] = useState(loadedState.drawConversations);
+  const [activeDrawConversationId, setActiveDrawConversationId] = useState(loadedState.activeDrawConversationId);
+  const [drawDrawerOpen, setDrawDrawerOpen] = useState(false);
+  const [drawLimitWarning, setDrawLimitWarning] = useState(false);
+  const [drawPendingImage, setDrawPendingImage] = useState(null);
 
   const abortControllerRef = useRef(null);
   const composerRef = useRef(null);
@@ -435,6 +455,7 @@ export default function App() {
   const cloudSaveTimerRef = useRef(null);
   const programmaticScrollRef = useRef(false);
   const cloudSavingRef = useRef(false);
+  const drawFileInputRef = useRef(null);
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
@@ -443,6 +464,23 @@ export default function App() {
   const hasUserMessages = activeMessages.some((message) => message.role === 'user');
   const draftHasText = draft.trim().length > 0;
   const canSend = (draftHasText || Boolean(pendingImage)) && !isSending && authState === 'authenticated';
+
+  const activeDrawConversation = drawConversations.find(
+    (c) => c.id === activeDrawConversationId,
+  ) || drawConversations[0] || null;
+  const drawImageCount = drawConversations.reduce(
+    (sum, c) => sum + c.messages.filter((m) => m.role === 'assistant' && m.imageUrl).length,
+    0,
+  );
+
+  // 修正 activeDrawConversationId 如果指向的对话已被删除
+  useEffect(() => {
+    if (drawConversations.length > 0 && !drawConversations.find((c) => c.id === activeDrawConversationId)) {
+      setActiveDrawConversationId(drawConversations[0].id);
+    } else if (drawConversations.length === 0 && activeDrawConversationId) {
+      setActiveDrawConversationId(null);
+    }
+  }, [drawConversations, activeDrawConversationId]);
 
   // 切换对话时重置可见消息数
   useEffect(() => {
@@ -462,6 +500,8 @@ export default function App() {
       settings,
       conversations,
       activeConversationId,
+      drawConversations,
+      activeDrawConversationId,
     });
 
     // 云端同步条件：已登录 + 非流式输出中 + 无正在进行的同步
@@ -471,7 +511,7 @@ export default function App() {
     cloudSaveTimerRef.current = setTimeout(() => {
       if (cloudSavingRef.current) return;
       cloudSavingRef.current = true;
-      saveToCloud({ settings, conversations, activeConversationId })
+      saveToCloud({ settings, conversations, activeConversationId, drawConversations, activeDrawConversationId })
         .catch(() => {})
         .finally(() => { cloudSavingRef.current = false; });
     }, 8000);
@@ -484,7 +524,7 @@ export default function App() {
       cloudSaveTimerRef.current = setTimeout(() => {
         if (cloudSavingRef.current) return;
         cloudSavingRef.current = true;
-        saveToCloud({ settings, conversations, activeConversationId })
+        saveToCloud({ settings, conversations, activeConversationId, drawConversations, activeDrawConversationId })
           .catch(() => {})
           .finally(() => { cloudSavingRef.current = false; });
       }, 2000);
@@ -502,6 +542,8 @@ export default function App() {
           setSettings(normalized.settings);
           setConversations(normalized.conversations);
           setActiveConversationId(normalized.activeConversationId);
+          setDrawConversations(normalized.drawConversations);
+          setActiveDrawConversationId(normalized.activeDrawConversationId);
         }
         setAuthState('authenticated');
       })
@@ -679,15 +721,21 @@ export default function App() {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setIsSending(false);
-    setIsGenerating(false);
     setStatusText('已停止生成');
   }
 
   function openDrawMode() {
     setDrawMode(true);
-    setGeneratedImage(null);
     setDrawPrompt('');
     setErrorText('');
+    setDrawLimitWarning(false);
+    setDrawPendingImage(null);
+    // If no active draw conversation, create one
+    if (!activeDrawConversationId || !drawConversations.find((c) => c.id === activeDrawConversationId)) {
+      const conv = createDrawConversation();
+      setDrawConversations([conv]);
+      setActiveDrawConversationId(conv.id);
+    }
   }
 
   function closeDrawMode() {
@@ -697,9 +745,91 @@ export default function App() {
       setIsGenerating(false);
     }
     setDrawMode(false);
-    setGeneratedImage(null);
     setErrorText('');
+    setDrawDrawerOpen(false);
+    setDrawLimitWarning(false);
+    setDrawPendingImage(null);
     setStatusText('已就绪');
+  }
+
+  function createNewDrawConversation() {
+    const conv = createDrawConversation();
+    setDrawConversations((prev) => [conv, ...prev]);
+    setActiveDrawConversationId(conv.id);
+    setDrawPrompt('');
+    setDrawDrawerOpen(false);
+  }
+
+  function removeDrawConversation(conversationId) {
+    setDrawConversations((current) => {
+      const remaining = current.filter((item) => item.id !== conversationId);
+      if (remaining.length) {
+        if (conversationId === activeDrawConversationId) {
+          setActiveDrawConversationId(remaining[0].id);
+        }
+        return remaining;
+      }
+      return [];
+    });
+    if (conversationId === activeDrawConversationId) {
+      setDrawPrompt('');
+    }
+  }
+
+  function updateDrawConversation(conversationId, updater) {
+    setDrawConversations((current) =>
+      current.map((conv) => {
+        if (conv.id !== conversationId) return conv;
+        const next = updater(conv);
+        return { ...next, updatedAt: Date.now() };
+      }),
+    );
+  }
+
+  function enforceDrawLimit() {
+    setDrawConversations((current) => {
+      let totalImages = current.reduce(
+        (sum, c) => sum + c.messages.filter((m) => m.role === 'assistant' && m.imageUrl).length,
+        0,
+      );
+      if (totalImages <= 20) return current;
+
+      // Need to remove oldest images
+      const result = current.map((c) => ({ ...c, messages: [...c.messages] }));
+
+      while (totalImages > 20 && result.length > 0) {
+        // Find the conversation with the oldest assistant image message
+        let oldestConvIdx = -1;
+        let oldestMsgIdx = -1;
+        let oldestTime = Infinity;
+
+        for (let ci = result.length - 1; ci >= 0; ci--) {
+          const msgs = result[ci].messages;
+          for (let mi = 0; mi < msgs.length; mi++) {
+            if (msgs[mi].role === 'assistant' && msgs[mi].imageUrl && msgs[mi].createdAt < oldestTime) {
+              oldestTime = msgs[mi].createdAt;
+              oldestConvIdx = ci;
+              oldestMsgIdx = mi;
+            }
+          }
+        }
+
+        if (oldestConvIdx < 0) break;
+
+        // Remove the oldest image message and its preceding user message
+        const conv = result[oldestConvIdx];
+        const removedMsg = conv.messages[oldestMsgIdx];
+        conv.messages.splice(oldestMsgIdx, 1);
+        // Also remove the user prompt right before it
+        if (oldestMsgIdx > 0 && conv.messages[oldestMsgIdx - 1].role === 'user') {
+          conv.messages.splice(oldestMsgIdx - 1, 1);
+        }
+        totalImages--;
+      }
+
+      // Remove empty conversations
+      return result.filter((c) => c.messages.length > 0);
+    });
   }
 
   async function handleDraw() {
@@ -708,10 +838,52 @@ export default function App() {
       return;
     }
 
+    // Check limit
+    if (drawImageCount >= 20) {
+      setDrawLimitWarning(true);
+    }
+
     setErrorText('');
     setIsGenerating(true);
-    setGeneratedImage(null);
     setStatusText('正在生成图片');
+
+    let targetConvId = activeDrawConversationId;
+    if (!targetConvId || !drawConversations.find((c) => c.id === targetConvId)) {
+      const conv = createDrawConversation();
+      setDrawConversations((prev) => [conv, ...prev]);
+      setActiveDrawConversationId(conv.id);
+      targetConvId = conv.id;
+    }
+
+    const now = Date.now();
+    const userMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: prompt,
+      referenceImage: drawPendingImage?.url || null,
+      size: settings.drawSize || '1024x1024',
+      quality: settings.drawQuality || 'medium',
+      createdAt: now,
+    };
+
+    const assistantMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      imageUrl: null,
+      prompt,
+      size: settings.drawSize || '1024x1024',
+      quality: settings.drawQuality || 'medium',
+      createdAt: now + 1,
+    };
+
+    updateDrawConversation(targetConvId, (conv) => ({
+      ...conv,
+      title: conv.messages.length === 0 ? prompt.slice(0, 18) : conv.title,
+      messages: [...conv.messages, userMessage, assistantMessage],
+    }));
+
+    setDrawPrompt('');
+    setDrawPendingImage(null);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -720,15 +892,19 @@ export default function App() {
       await generateImage({
         settings,
         prompt,
+        referenceImage: userMessage.referenceImage,
         size: settings.drawSize || '1024x1024',
         quality: settings.drawQuality || 'medium',
         signal: controller.signal,
         onImage: (imageUrl) => {
-          setGeneratedImage(imageUrl);
-          setDrawHistory((prev) => [
-            { id: crypto.randomUUID(), prompt, imageUrl, size: settings.drawSize, quality: settings.drawQuality, createdAt: Date.now() },
-            ...prev,
-          ].slice(0, 20));
+          updateDrawConversation(targetConvId, (conv) => ({
+            ...conv,
+            messages: conv.messages.map((m) =>
+              m.id === assistantMessage.id ? { ...m, imageUrl } : m,
+            ),
+          }));
+          // Enforce 20 image limit (auto-replace oldest)
+          enforceDrawLimit();
         },
       });
 
@@ -738,8 +914,20 @@ export default function App() {
         const nextErrorText = error.message || '图片生成失败，请重试。';
         setErrorText(nextErrorText);
         setStatusText('图片生成失败');
+        // Update the assistant message with error
+        updateDrawConversation(targetConvId, (conv) => ({
+          ...conv,
+          messages: conv.messages.map((m) =>
+            m.id === assistantMessage.id ? { ...m, error: nextErrorText } : m,
+          ),
+        }));
       } else {
         setStatusText('图片生成已停止');
+        // Remove the incomplete messages
+        updateDrawConversation(targetConvId, (conv) => ({
+          ...conv,
+          messages: conv.messages.filter((m) => m.id !== userMessage.id && m.id !== assistantMessage.id),
+        }));
       }
     } finally {
       abortControllerRef.current = null;
@@ -760,9 +948,27 @@ export default function App() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch {
-      // 如果是跨域图片，直接打开新窗口
       window.open(imageUrl, '_blank');
     }
+  }
+
+  function deleteDrawMessage(conversationId, messageId) {
+    updateDrawConversation(conversationId, (conv) => {
+      const idx = conv.messages.findIndex((m) => m.id === messageId);
+      if (idx < 0) return conv;
+      const newMessages = [...conv.messages];
+      // If this is an assistant message, also remove the preceding user message
+      if (newMessages[idx].role === 'assistant' && idx > 0 && newMessages[idx - 1].role === 'user') {
+        newMessages.splice(idx - 1, 2);
+      } else if (newMessages[idx].role === 'user' && idx + 1 < newMessages.length && newMessages[idx + 1].role === 'assistant') {
+        newMessages.splice(idx, 2);
+      } else {
+        newMessages.splice(idx, 1);
+      }
+      return { ...conv, messages: newMessages };
+    });
+    // Clean up empty conversations
+    setDrawConversations((current) => current.filter((c) => c.messages.length > 0));
   }
 
   function retryMessage(message) {
@@ -999,9 +1205,6 @@ export default function App() {
         url: result,
       });
       setErrorText('');
-      if (!draft.trim()) {
-        setDraft('请结合这张图片回答。');
-      }
     };
     reader.onerror = () => {
       setErrorText('图片读取失败，请重试。');
@@ -1379,7 +1582,7 @@ export default function App() {
             <img className="header-logo" src="/logo-2.png" alt="" />
             <h1>{activeConversation?.title || 'lightChat'}</h1>
             <p>
-              <span className={classNames('status-dot', (isSending || isGenerating) && 'status-dot-live')} />
+              <span className={classNames('status-dot', isSending && 'status-dot-live')} />
               {statusText}
             </p>
           </div>
@@ -1493,129 +1696,293 @@ export default function App() {
       </main>
 
       {drawMode && (
-        <div className="draw-panel">
-          <header className="draw-header">
-            <button className="plain-icon-button" type="button" onClick={closeDrawMode}>
-              返回
-            </button>
-            <div className="draw-header-title">
-              <img className="header-logo" src="/logo-2.png" alt="" />
-              <h1>AI 画图</h1>
-            </div>
-            <div style={{ width: 56 }} />
-          </header>
-
-          <div className="draw-body">
-            {errorText && <div className="error-banner">{errorText}</div>}
-
-            {generatedImage && (
-              <div className="draw-result">
-                <img className="draw-result-image" src={generatedImage} alt="生成的图片" />
-                <div className="draw-result-actions">
-                  <button
-                    className="tool-button"
-                    type="button"
-                    onClick={() => downloadImage(generatedImage, drawPrompt)}
-                  >
-                    保存图片
-                  </button>
-                  <button
-                    className="tool-button"
-                    type="button"
-                    onClick={() => {
-                      setGeneratedImage(null);
-                    }}
-                  >
-                    重新生成
-                  </button>
+        <div className="draw-page">
+          {/* Draw drawer (conversation list) */}
+          <aside className={classNames('drawer', drawDrawerOpen && 'drawer-open')}>
+            <div className="drawer-header">
+              <div className="drawer-brand">
+                <img className="drawer-logo" src="/logo-2.png" alt="" />
+                <div>
+                  <div className="drawer-kicker">lightDraw</div>
+                  <div className="drawer-title">画图记录</div>
                 </div>
               </div>
-            )}
-
-            {isGenerating && !generatedImage && (
-              <div className="draw-loading">
-                <div className="draw-loading-spinner" />
-                <p>正在生成图片，可能需要 30-120 秒...</p>
-                <button className="tool-button tool-button-retry" type="button" onClick={closeDrawMode}>
-                  取消
-                </button>
-              </div>
-            )}
-
-            {!isGenerating && !generatedImage && drawHistory.length > 0 && (
-              <div className="draw-history">
-                <div className="draw-history-title">最近生成</div>
-                <div className="draw-history-grid">
-                  {drawHistory.map((item) => (
-                    <div key={item.id} className="draw-history-item" onClick={() => setGeneratedImage(item.imageUrl)}>
-                      <img className="draw-history-thumb" src={item.imageUrl} alt={item.prompt} />
-                      <div className="draw-history-prompt">{item.prompt}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!isGenerating && !generatedImage && drawHistory.length === 0 && (
-              <div className="draw-empty">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                <p>输入描述，AI 为你生成图片</p>
-              </div>
-            )}
-          </div>
-
-          <footer className="draw-footer">
-            <div className="draw-config">
-              <label className="draw-config-item">
-                <span>尺寸</span>
-                <select
-                  className="draw-config-select"
-                  value={settings.drawSize || '1024x1024'}
-                  onChange={(e) => setSettings((s) => ({ ...s, drawSize: e.target.value }))}
-                >
-                  {DRAW_SIZE_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="draw-config-item">
-                <span>质量</span>
-                <select
-                  className="draw-config-select"
-                  value={settings.drawQuality || 'medium'}
-                  onChange={(e) => setSettings((s) => ({ ...s, drawQuality: e.target.value }))}
-                >
-                  {DRAW_QUALITY_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <div className="draw-input-row">
-              <textarea
-                className="draw-input"
-                rows={1}
-                value={drawPrompt}
-                onChange={(e) => setDrawPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleDraw();
-                  }
-                }}
-                placeholder="描述你想要的图片..."
-                disabled={isGenerating}
-              />
-              <button
-                className="send-button draw-send-button"
-                type="button"
-                disabled={!drawPrompt.trim() || isGenerating || authState !== 'authenticated'}
-                onClick={handleDraw}
-              >
-                生成
+              <button className="plain-icon-button" type="button" onClick={() => setDrawDrawerOpen(false)}>
+                关闭
               </button>
             </div>
-          </footer>
+
+            <div className="history-pane">
+              <button className="primary-button wide-button" type="button" onClick={createNewDrawConversation}>
+                新建画图
+              </button>
+
+              <div className="history-list">
+                {drawConversations
+                  .slice()
+                  .sort((a, b) => b.updatedAt - a.updatedAt)
+                  .map((conv) => (
+                    <div
+                      key={conv.id}
+                      className={classNames(
+                        'history-card',
+                        conv.id === activeDrawConversationId && 'history-card-active',
+                      )}
+                    >
+                      <button
+                        className="history-main"
+                        type="button"
+                        onClick={() => {
+                          setActiveDrawConversationId(conv.id);
+                          setDrawDrawerOpen(false);
+                        }}
+                      >
+                        <span className="history-title">{conv.title}</span>
+                        <span className="history-time">
+                          {conv.messages.filter((m) => m.imageUrl).length} 张图 · {formatDateTime(conv.updatedAt)}
+                        </span>
+                      </button>
+                      <button
+                        className="history-delete"
+                        type="button"
+                        aria-label="删除画图记录"
+                        onClick={() => removeDrawConversation(conv.id)}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </aside>
+
+          {drawDrawerOpen && (
+            <button
+              className="drawer-backdrop"
+              type="button"
+              aria-label="关闭面板"
+              onClick={() => setDrawDrawerOpen(false)}
+            />
+          )}
+
+          {/* Draw main page */}
+          <main className="phone-shell">
+            <header className="chat-header chat-header-3col">
+              <button className="header-button" type="button" onClick={() => setDrawDrawerOpen(true)}>
+                <span aria-hidden="true">☰</span>
+              </button>
+
+              <div className="chat-title">
+                <img className="header-logo" src="/logo-2.png" alt="" />
+                <h1>{activeDrawConversation?.title || 'AI 画图'}</h1>
+                <p>
+                  <span className={classNames('status-dot', isGenerating && 'status-dot-live')} />
+                  {isGenerating ? '生成中' : `已存 ${drawImageCount}/20 张`}
+                </p>
+              </div>
+
+              <button className="header-button" type="button" onClick={closeDrawMode} aria-label="返回聊天">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </button>
+            </header>
+
+            <div className="message-list-wrapper">
+              <section className="message-list" aria-live="polite">
+                {drawLimitWarning && (
+                  <div className="draw-limit-banner">
+                    已存满 20 张图，新图片将自动替换最早的图片
+                    <button type="button" onClick={() => setDrawLimitWarning(false)}>知道了</button>
+                  </div>
+                )}
+                {errorText && <div className="error-banner">{errorText}</div>}
+
+                {activeDrawConversation?.messages.length === 0 && !isGenerating && (
+                  <div className="draw-empty">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                    <p>输入描述，AI 为你生成图片</p>
+                  </div>
+                )}
+
+                {activeDrawConversation?.messages.map((msg) => {
+                  if (msg.role === 'user') {
+                    return (
+                      <article key={msg.id} className="message-row message-user">
+                        <div className="message-meta">
+                          <span>我</span>
+                          <time>{formatTime(msg.createdAt)}</time>
+                        </div>
+                        <div className="message-bubble">
+                          {msg.referenceImage && (
+                            <img className="draw-ref-image" src={msg.referenceImage} alt="参考图" />
+                          )}
+                          {msg.content}
+                          <span className="draw-msg-config">{DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
+                        </div>
+                      </article>
+                    );
+                  }
+
+                  // assistant message
+                  if (msg.imageUrl) {
+                    return (
+                      <article key={msg.id} className="message-row message-assistant">
+                        <div className="message-meta">
+                          <img className="message-avatar" src="/logo-2.png" alt="" />
+                          <span>AI</span>
+                          <time>{formatTime(msg.createdAt)}</time>
+                        </div>
+                        <div className="message-bubble">
+                          <img className="draw-result-image" src={msg.imageUrl} alt={msg.prompt} />
+                          <div className="draw-result-actions">
+                            <button className="tool-button" type="button" onClick={() => downloadImage(msg.imageUrl, msg.prompt)}>
+                              保存
+                            </button>
+                            <button className="tool-button tool-button-retry" type="button" onClick={() => deleteDrawMessage(activeDrawConversation.id, msg.id)}>
+                              删除
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  }
+
+                  if (msg.error) {
+                    return (
+                      <article key={msg.id} className="message-row message-assistant">
+                        <div className="message-meta">
+                          <img className="message-avatar" src="/logo-2.png" alt="" />
+                          <span>AI</span>
+                        </div>
+                        <div className="message-bubble">
+                          <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(`出错了：${msg.error}`) }} />
+                        </div>
+                      </article>
+                    );
+                  }
+
+                  // Still generating (no imageUrl yet)
+                  if (isGenerating) {
+                    return (
+                      <article key={msg.id} className="message-row message-assistant">
+                        <div className="message-meta">
+                          <img className="message-avatar" src="/logo-2.png" alt="" />
+                          <span>AI</span>
+                        </div>
+                        <div className="message-bubble">
+                          <div className="draw-loading-inline">
+                            <div className="draw-loading-spinner" />
+                            <span>正在生成图片...</span>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  }
+
+                  return null;
+                })}
+              </section>
+            </div>
+
+            <footer className="composer-panel">
+              {drawPendingImage && (
+                <div className="pending-image-card">
+                  <img className="pending-image-preview" src={drawPendingImage.url} alt="参考图" />
+                  <div className="pending-image-info">
+                    <div className="pending-image-title">参考图（图生图）</div>
+                    <div className="pending-image-name">{drawPendingImage.name}</div>
+                  </div>
+                  <button className="pending-image-remove" type="button" onClick={() => setDrawPendingImage(null)}>
+                    移除
+                  </button>
+                </div>
+              )}
+              <div className="draw-config">
+                <label className="draw-config-item">
+                  <span>尺寸</span>
+                  <select
+                    className="draw-config-select"
+                    value={settings.drawSize || '1024x1024'}
+                    onChange={(e) => setSettings((s) => ({ ...s, drawSize: e.target.value }))}
+                  >
+                    {DRAW_SIZE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="draw-config-item">
+                  <span>质量</span>
+                  <select
+                    className="draw-config-select"
+                    value={settings.drawQuality || 'medium'}
+                    onChange={(e) => setSettings((s) => ({ ...s, drawQuality: e.target.value }))}
+                  >
+                    {DRAW_QUALITY_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="draw-input-row">
+                <button className="upload-button" type="button" onClick={() => drawFileInputRef.current?.click()} aria-label="上传参考图">
+                  参考图
+                </button>
+                <textarea
+                  className="draw-input"
+                  rows={1}
+                  value={drawPrompt}
+                  onChange={(e) => setDrawPrompt(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleDraw();
+                    }
+                  }}
+                  placeholder="描述你想要的图片..."
+                  disabled={isGenerating}
+                />
+                {isGenerating ? (
+                  <button className="send-button stop-button" type="button" onClick={closeDrawMode}>
+                    停止
+                  </button>
+                ) : (
+                  <button
+                    className="send-button draw-send-button"
+                    type="button"
+                    disabled={!drawPrompt.trim() || isGenerating || authState !== 'authenticated'}
+                    onClick={handleDraw}
+                  >
+                    生成
+                  </button>
+                )}
+              </div>
+              <input
+                ref={drawFileInputRef}
+                className="hidden-input"
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  if (!file.type.startsWith('image/')) {
+                    setErrorText('只能上传图片文件。');
+                    e.target.value = '';
+                    return;
+                  }
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    setDrawPendingImage({
+                      name: file.name,
+                      url: typeof reader.result === 'string' ? reader.result : '',
+                    });
+                    setErrorText('');
+                  };
+                  reader.onerror = () => setErrorText('图片读取失败');
+                  reader.readAsDataURL(file);
+                  e.target.value = '';
+                }}
+              />
+            </footer>
+          </main>
         </div>
       )}
     </div>

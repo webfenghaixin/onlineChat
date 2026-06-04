@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
-import { streamChatCompletion } from './lib/stream';
+import { streamChatCompletion, generateImage } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername } from './lib/auth';
 
 const STORAGE_KEY = 'online-chat-h5-state-v6';
@@ -27,6 +27,18 @@ const MODEL_OPTIONS = [
   { value: 'gpt-5.4', label: 'GPT-5.4' },
   { value: 'gpt-5.4-medium', label: 'GPT-5.4-Medium' },
   { value: 'gpt-5.4-high', label: 'GPT-5.4-High' },
+];
+
+const DRAW_SIZE_OPTIONS = [
+  { value: '1024x1024', label: '1:1 方图' },
+  { value: '1024x1536', label: '2:3 竖图' },
+  { value: '1536x1024', label: '3:2 横图' },
+];
+
+const DRAW_QUALITY_OPTIONS = [
+  { value: 'low', label: '快速' },
+  { value: 'medium', label: '标准' },
+  { value: 'high', label: '高清' },
 ];
 
 marked.setOptions({
@@ -64,6 +76,8 @@ const defaultSettings = {
   useProxy: true,
   proxyPath: '/api/proxy',
   fontSize: 'lg',
+  drawSize: '1024x1024',
+  drawQuality: 'medium',
 };
 
 function getTextParts(content) {
@@ -407,6 +421,11 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => getStoredUsername());
   const [pendingImage, setPendingImage] = useState(null);
+  const [drawMode, setDrawMode] = useState(false);
+  const [drawPrompt, setDrawPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedImage, setGeneratedImage] = useState(null);
+  const [drawHistory, setDrawHistory] = useState([]);
 
   const abortControllerRef = useRef(null);
   const composerRef = useRef(null);
@@ -660,7 +679,90 @@ export default function App() {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     setIsSending(false);
+    setIsGenerating(false);
     setStatusText('已停止生成');
+  }
+
+  function openDrawMode() {
+    setDrawMode(true);
+    setGeneratedImage(null);
+    setDrawPrompt('');
+    setErrorText('');
+  }
+
+  function closeDrawMode() {
+    if (isGenerating) {
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+      setIsGenerating(false);
+    }
+    setDrawMode(false);
+    setGeneratedImage(null);
+    setErrorText('');
+    setStatusText('已就绪');
+  }
+
+  async function handleDraw() {
+    const prompt = drawPrompt.trim();
+    if (!prompt || isGenerating || authState !== 'authenticated') {
+      return;
+    }
+
+    setErrorText('');
+    setIsGenerating(true);
+    setGeneratedImage(null);
+    setStatusText('正在生成图片');
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    try {
+      await generateImage({
+        settings,
+        prompt,
+        size: settings.drawSize || '1024x1024',
+        quality: settings.drawQuality || 'medium',
+        signal: controller.signal,
+        onImage: (imageUrl) => {
+          setGeneratedImage(imageUrl);
+          setDrawHistory((prev) => [
+            { id: crypto.randomUUID(), prompt, imageUrl, size: settings.drawSize, quality: settings.drawQuality, createdAt: Date.now() },
+            ...prev,
+          ].slice(0, 20));
+        },
+      });
+
+      setStatusText('图片生成完成');
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        const nextErrorText = error.message || '图片生成失败，请重试。';
+        setErrorText(nextErrorText);
+        setStatusText('图片生成失败');
+      } else {
+        setStatusText('图片生成已停止');
+      }
+    } finally {
+      abortControllerRef.current = null;
+      setIsGenerating(false);
+    }
+  }
+
+  async function downloadImage(imageUrl, prompt) {
+    try {
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `draw_${prompt.slice(0, 20).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // 如果是跨域图片，直接打开新窗口
+      window.open(imageUrl, '_blank');
+    }
   }
 
   function retryMessage(message) {
@@ -1268,7 +1370,7 @@ export default function App() {
       )}
 
       <main className="phone-shell">
-        <header className="chat-header">
+        <header className="chat-header chat-header-3col">
           <button className="header-button" type="button" onClick={() => openDrawer('history')}>
             <span aria-hidden="true">☰</span>
           </button>
@@ -1277,10 +1379,14 @@ export default function App() {
             <img className="header-logo" src="/logo-2.png" alt="" />
             <h1>{activeConversation?.title || 'lightChat'}</h1>
             <p>
-              <span className={classNames('status-dot', isSending && 'status-dot-live')} />
+              <span className={classNames('status-dot', (isSending || isGenerating) && 'status-dot-live')} />
               {statusText}
             </p>
           </div>
+
+          <button className="header-button draw-header-button" type="button" onClick={openDrawMode} aria-label="画图">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          </button>
         </header>
 
         <div className="message-list-wrapper">
@@ -1385,6 +1491,133 @@ export default function App() {
           />
         </footer>
       </main>
+
+      {drawMode && (
+        <div className="draw-panel">
+          <header className="draw-header">
+            <button className="plain-icon-button" type="button" onClick={closeDrawMode}>
+              返回
+            </button>
+            <div className="draw-header-title">
+              <img className="header-logo" src="/logo-2.png" alt="" />
+              <h1>AI 画图</h1>
+            </div>
+            <div style={{ width: 56 }} />
+          </header>
+
+          <div className="draw-body">
+            {errorText && <div className="error-banner">{errorText}</div>}
+
+            {generatedImage && (
+              <div className="draw-result">
+                <img className="draw-result-image" src={generatedImage} alt="生成的图片" />
+                <div className="draw-result-actions">
+                  <button
+                    className="tool-button"
+                    type="button"
+                    onClick={() => downloadImage(generatedImage, drawPrompt)}
+                  >
+                    保存图片
+                  </button>
+                  <button
+                    className="tool-button"
+                    type="button"
+                    onClick={() => {
+                      setGeneratedImage(null);
+                    }}
+                  >
+                    重新生成
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {isGenerating && !generatedImage && (
+              <div className="draw-loading">
+                <div className="draw-loading-spinner" />
+                <p>正在生成图片，可能需要 30-120 秒...</p>
+                <button className="tool-button tool-button-retry" type="button" onClick={closeDrawMode}>
+                  取消
+                </button>
+              </div>
+            )}
+
+            {!isGenerating && !generatedImage && drawHistory.length > 0 && (
+              <div className="draw-history">
+                <div className="draw-history-title">最近生成</div>
+                <div className="draw-history-grid">
+                  {drawHistory.map((item) => (
+                    <div key={item.id} className="draw-history-item" onClick={() => setGeneratedImage(item.imageUrl)}>
+                      <img className="draw-history-thumb" src={item.imageUrl} alt={item.prompt} />
+                      <div className="draw-history-prompt">{item.prompt}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!isGenerating && !generatedImage && drawHistory.length === 0 && (
+              <div className="draw-empty">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                <p>输入描述，AI 为你生成图片</p>
+              </div>
+            )}
+          </div>
+
+          <footer className="draw-footer">
+            <div className="draw-config">
+              <label className="draw-config-item">
+                <span>尺寸</span>
+                <select
+                  className="draw-config-select"
+                  value={settings.drawSize || '1024x1024'}
+                  onChange={(e) => setSettings((s) => ({ ...s, drawSize: e.target.value }))}
+                >
+                  {DRAW_SIZE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="draw-config-item">
+                <span>质量</span>
+                <select
+                  className="draw-config-select"
+                  value={settings.drawQuality || 'medium'}
+                  onChange={(e) => setSettings((s) => ({ ...s, drawQuality: e.target.value }))}
+                >
+                  {DRAW_QUALITY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="draw-input-row">
+              <textarea
+                className="draw-input"
+                rows={1}
+                value={drawPrompt}
+                onChange={(e) => setDrawPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleDraw();
+                  }
+                }}
+                placeholder="描述你想要的图片..."
+                disabled={isGenerating}
+              />
+              <button
+                className="send-button draw-send-button"
+                type="button"
+                disabled={!drawPrompt.trim() || isGenerating || authState !== 'authenticated'}
+                onClick={handleDraw}
+              >
+                生成
+              </button>
+            </div>
+          </footer>
+        </div>
+      )}
     </div>
   );
 }

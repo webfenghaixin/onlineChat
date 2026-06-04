@@ -378,3 +378,80 @@ export async function streamChatCompletion({ settings, messages, signal, onText 
 
   onText(tail);
 }
+
+function resolveDrawProxyUrl(settings) {
+  if (settings.useProxy) {
+    const proxyPath = settings.proxyPath?.trim() || '/api/proxy';
+    // 将 /proxy 替换为 /draw
+    const drawPath = proxyPath.replace(/\/proxy\/?$/, '/draw').replace(/\/proxy$/, '/draw');
+    if (/^https?:\/\//i.test(drawPath)) {
+      return drawPath;
+    }
+    return drawPath.startsWith('/') ? drawPath : `/${drawPath}`;
+  }
+  return 'https://www.right.codes/draw';
+}
+
+function buildDrawHeaders(settings) {
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+
+  if (settings.useProxy) {
+    headers['X-Source'] = settings.source || 'rightcode';
+  } else if (settings.apiKey.trim()) {
+    headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
+  }
+
+  return headers;
+}
+
+export async function generateImage({ settings, prompt, size, quality, signal, onImage }) {
+  const url = resolveDrawProxyUrl(settings);
+  const body = JSON.stringify({
+    model: 'gpt-image-2',
+    prompt,
+    n: 1,
+    size: size || '1024x1024',
+    quality: quality || 'medium',
+  });
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: buildDrawHeaders(settings),
+    body,
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '请求失败');
+    throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
+  }
+
+  const data = await response.json();
+
+  // 兼容多种返回格式
+  if (Array.isArray(data?.data) && data.data.length > 0) {
+    const item = data.data[0];
+    if (item.b64_json) {
+      onImage(`data:image/png;base64,${item.b64_json}`);
+      return;
+    }
+    if (item.url) {
+      onImage(item.url);
+      return;
+    }
+  }
+
+  // 兼容直接返回 url 或 b64_json 的情况
+  if (data?.url) {
+    onImage(data.url);
+    return;
+  }
+  if (data?.b64_json) {
+    onImage(`data:image/png;base64,${data.b64_json}`);
+    return;
+  }
+
+  throw new Error('图片生成接口未返回有效的图片数据。');
+}

@@ -459,6 +459,7 @@ export default function App() {
   const [drawLimitWarning, setDrawLimitWarning] = useState(false);
   const [drawPendingImage, setDrawPendingImage] = useState(null);
   const [drawElapsedSeconds, setDrawElapsedSeconds] = useState(0);
+  const [deleteDrawTarget, setDeleteDrawTarget] = useState(null);
 
   const abortControllerRef = useRef(null);
   const composerRef = useRef(null);
@@ -528,7 +529,7 @@ export default function App() {
     });
 
     // 云端同步条件：已登录 + 非流式输出中 + 无正在进行的同步
-    if (authState !== 'authenticated' || isSending || cloudSavingRef.current) return;
+    if (authState !== 'authenticated' || isSending || isGenerating || cloudSavingRef.current) return;
 
     clearTimeout(cloudSaveTimerRef.current);
     cloudSaveTimerRef.current = setTimeout(() => {
@@ -538,11 +539,20 @@ export default function App() {
         .catch(() => {})
         .finally(() => { cloudSavingRef.current = false; });
     }, 8000);
-  }, [settings, conversations, activeConversationId, authState, isSending]);
+  }, [
+    settings,
+    conversations,
+    activeConversationId,
+    drawConversations,
+    activeDrawConversationId,
+    authState,
+    isSending,
+    isGenerating,
+  ]);
 
   // 流式输出结束后立即触发一次云端同步
   useEffect(() => {
-    if (!isSending && authState === 'authenticated') {
+    if (!isSending && !isGenerating && authState === 'authenticated') {
       clearTimeout(cloudSaveTimerRef.current);
       cloudSaveTimerRef.current = setTimeout(() => {
         if (cloudSavingRef.current) return;
@@ -552,7 +562,16 @@ export default function App() {
           .finally(() => { cloudSavingRef.current = false; });
       }, 2000);
     }
-  }, [isSending, authState, settings, conversations, activeConversationId]);
+  }, [
+    isSending,
+    isGenerating,
+    authState,
+    settings,
+    conversations,
+    activeConversationId,
+    drawConversations,
+    activeDrawConversationId,
+  ]);
 
   useEffect(() => {
     if (authState !== 'loading') return;
@@ -1062,11 +1081,17 @@ export default function App() {
     }
   }
 
-  function deleteDrawMessage(conversationId, messageId) {
-    if (!window.confirm('确定删除这张图片吗？对应的提示词记录也会一起删除。')) {
-      return;
-    }
+  function requestDeleteDrawMessage(conversationId, messageId) {
+    setDeleteDrawTarget({ conversationId, messageId });
+  }
 
+  function cancelDeleteDrawMessage() {
+    setDeleteDrawTarget(null);
+  }
+
+  function confirmDeleteDrawMessage() {
+    if (!deleteDrawTarget) return;
+    const { conversationId, messageId } = deleteDrawTarget;
     updateDrawConversation(conversationId, (conv) => {
       const idx = conv.messages.findIndex((m) => m.id === messageId);
       if (idx < 0) return conv;
@@ -1083,6 +1108,7 @@ export default function App() {
     });
     // Clean up empty conversations
     setDrawConversations((current) => current.filter((c) => c.messages.length > 0));
+    setDeleteDrawTarget(null);
   }
 
   function retryMessage(message) {
@@ -1951,7 +1977,7 @@ export default function App() {
                             <button className="tool-button" type="button" onClick={() => downloadImage(msg.imageUrl, msg.prompt)}>
                               保存到相册
                             </button>
-                            <button className="tool-button tool-button-retry" type="button" onClick={() => deleteDrawMessage(activeDrawConversation.id, msg.id)}>
+                            <button className="tool-button tool-button-retry" type="button" onClick={() => requestDeleteDrawMessage(activeDrawConversation.id, msg.id)}>
                               删除
                             </button>
                           </div>
@@ -2115,6 +2141,29 @@ export default function App() {
               />
             </footer>
           </main>
+
+          {deleteDrawTarget && (
+            <div className="confirm-layer" role="dialog" aria-modal="true" aria-labelledby="delete-draw-title">
+              <button
+                className="confirm-backdrop"
+                type="button"
+                aria-label="取消删除"
+                onClick={cancelDeleteDrawMessage}
+              />
+              <div className="confirm-dialog">
+                <h2 id="delete-draw-title">删除这张图片？</h2>
+                <p>对应的提示词记录也会一起删除，此操作不可撤销。</p>
+                <div className="confirm-actions">
+                  <button className="confirm-button confirm-button-secondary" type="button" onClick={cancelDeleteDrawMessage}>
+                    取消
+                  </button>
+                  <button className="confirm-button confirm-button-danger" type="button" onClick={confirmDeleteDrawMessage}>
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

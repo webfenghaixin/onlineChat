@@ -4,11 +4,11 @@ export const config = {
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Source',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Source, X-Draw-Path',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const DRAW_ENDPOINT = 'https://www.right.codes/draw/v1/chat/completions';
+const DRAW_BASE = 'https://www.right.codes/draw';
 
 function jsonResponse(statusCode, body, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -34,6 +34,12 @@ export default async function handler(request) {
   const envKey = source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
   const serverApiKey = process.env[envKey] || '';
 
+  const requestedDrawPath = request.headers.get('x-draw-path') || '/v1/images/generations';
+  const drawPath = ['/v1/images/generations', '/v1/chat/completions'].includes(requestedDrawPath)
+    ? requestedDrawPath
+    : '/v1/images/generations';
+  const drawEndpoint = `${DRAW_BASE}${drawPath}`;
+
   let requestBody;
   try {
     requestBody = await request.text();
@@ -49,7 +55,7 @@ export default async function handler(request) {
   }
 
   try {
-    const upstreamResponse = await fetch(DRAW_ENDPOINT, {
+    const upstreamResponse = await fetch(drawEndpoint, {
       method: 'POST',
       headers: upstreamHeaders,
       body: requestBody,

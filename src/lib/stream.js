@@ -379,26 +379,31 @@ export async function streamChatCompletion({ settings, messages, signal, onText 
   onText(tail);
 }
 
-function resolveDrawProxyUrl(settings) {
+function resolveDrawProxyUrl(settings, apiMode) {
   if (settings.useProxy) {
     const proxyPath = settings.proxyPath?.trim() || '/api/proxy';
-    // 将 /proxy 替换为 /draw
     const drawPath = proxyPath.replace(/\/proxy\/?$/, '/draw').replace(/\/proxy$/, '/draw');
     if (/^https?:\/\//i.test(drawPath)) {
       return drawPath;
     }
     return drawPath.startsWith('/') ? drawPath : `/${drawPath}`;
   }
-  return 'https://www.right.codes/draw/v1/chat/completions';
+  const basePath = 'https://www.right.codes/draw';
+  return apiMode === 'chat'
+    ? `${basePath}/v1/chat/completions`
+    : `${basePath}/v1/images/generations`;
 }
 
-function buildDrawHeaders(settings) {
+function buildDrawHeaders(settings, apiMode) {
   const headers = {
     'Content-Type': 'application/json',
   };
 
   if (settings.useProxy) {
     headers['X-Source'] = settings.source || 'rightcode';
+    headers['X-Draw-Path'] = apiMode === 'chat'
+      ? '/v1/chat/completions'
+      : '/v1/images/generations';
   } else if (settings.apiKey.trim()) {
     headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
   }
@@ -409,29 +414,100 @@ function buildDrawHeaders(settings) {
 function extractImageUrlFromContent(content) {
   if (!content || typeof content !== 'string') return null;
 
-  // 匹配 markdown 图片语法 ![...](url)
   const mdMatch = content.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
   if (mdMatch) return mdMatch[1];
 
-  // 匹配 markdown 图片语法 ![...](data:image/...)
   const mdDataMatch = content.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^\s)]+)\)/);
   if (mdDataMatch) return mdDataMatch[1];
 
-  // 匹配纯 URL（以 http 开头，常见图片后缀或不含后缀的 CDN 链接）
   const urlMatch = content.match(/(https?:\/\/[^\s"'<>]+\.(?:png|jpg|jpeg|webp|gif)[^\s"'<>]*)/i);
   if (urlMatch) return urlMatch[1];
 
-  // 匹配 data:image base64
   const dataMatch = content.match(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/);
   if (dataMatch) return dataMatch[1];
 
   return null;
 }
 
-export async function generateImage({ settings, prompt, referenceImage, size, quality, signal, onImage }) {
-  const url = resolveDrawProxyUrl(settings);
+function extractImageUrlFromPayload(payload) {
+  if (!payload) return null;
 
-  // 构建 user content：图生图时用数组格式，纯文生图用字符串
+  if (typeof payload === 'string') {
+    return extractImageUrlFromContent(payload);
+  }
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const url = extractImageUrlFromPayload(item);
+      if (url) return url;
+    }
+    return null;
+  }
+
+  if (typeof payload !== 'object') {
+    return null;
+  }
+
+  if (typeof payload.url === 'string' && (payload.url.startsWith('http') || payload.url.startsWith('data:image/'))) {
+    return payload.url;
+  }
+
+  if (typeof payload.b64_json === 'string') {
+    return `data:image/png;base64,${payload.b64_json}`;
+  }
+
+  if (typeof payload.image_url === 'string') {
+    return payload.image_url;
+  }
+
+  if (typeof payload.image_url?.url === 'string') {
+    return payload.image_url.url;
+  }
+
+  const priorityKeys = ['data', 'images', 'image', 'output', 'content', 'message', 'choices'];
+  for (const key of priorityKeys) {
+    const url = extractImageUrlFromPayload(payload[key]);
+    if (url) return url;
+  }
+
+  return null;
+}
+
+// /v1/images/generations 模式：非流式，直接返回 JSON
+async function generateImageViaImagesApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage }) {
+  const body = JSON.stringify({
+    model,
+    prompt,
+    image: referenceImage ? [referenceImage] : undefined,
+    size: size || '1024x1024',
+    quality: quality || 'medium',
+    response_format: 'url',
+  });
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body,
+    signal,
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '请求失败');
+    throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
+  }
+
+  const data = await response.json();
+  const imageUrl = extractImageUrlFromPayload(data);
+  if (imageUrl) {
+    onImage(imageUrl);
+    return;
+  }
+
+  throw new Error(`图片生成完成但未提取到图片。接口返回：${JSON.stringify(data).slice(0, 200)}`);
+}
+
+// /v1/chat/completions 模式：流式，从文本中提取图片
+async function generateImageViaChatApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage }) {
   const sizeHint = size ? `，图片尺寸${size}` : '';
   const qualityHint = quality ? `，画质${quality}` : '';
   const textPart = referenceImage
@@ -449,13 +525,8 @@ export async function generateImage({ settings, prompt, referenceImage, size, qu
   }
 
   const body = JSON.stringify({
-    model: 'gpt-image-2',
-    messages: [
-      {
-        role: 'user',
-        content: userContent,
-      },
-    ],
+    model,
+    messages: [{ role: 'user', content: userContent }],
     stream: true,
     size: size || '1024x1024',
     quality: quality || 'medium',
@@ -463,7 +534,7 @@ export async function generateImage({ settings, prompt, referenceImage, size, qu
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: buildDrawHeaders(settings),
+    headers,
     body,
     signal,
   });
@@ -473,7 +544,6 @@ export async function generateImage({ settings, prompt, referenceImage, size, qu
     throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
   }
 
-  // 流式读取，收集完整文本后提取图片
   const contentType = response.headers.get('content-type') || '';
   let fullText = '';
 
@@ -488,7 +558,6 @@ export async function generateImage({ settings, prompt, referenceImage, size, qu
 
       buffer += decoder.decode(value, { stream: true });
 
-      // 解析 SSE 格式
       while (buffer.includes('\n\n')) {
         const boundaryIndex = buffer.indexOf('\n\n');
         const rawEvent = buffer.slice(0, boundaryIndex);
@@ -504,39 +573,50 @@ export async function generateImage({ settings, prompt, referenceImage, size, qu
 
         const parsed = safeJsonParse(joined);
         if (parsed) {
+          const imageUrl = extractImageUrlFromPayload(parsed);
+          if (imageUrl) {
+            onImage(imageUrl);
+            return;
+          }
           const text = extractTextFromEvent(parsed);
           if (text) fullText += text;
         }
       }
     }
 
-    // 处理 buffer 中剩余内容
     if (buffer.trim()) {
       const parsed = safeJsonParse(buffer.trim());
       if (parsed) {
+        const imageUrl = extractImageUrlFromPayload(parsed);
+        if (imageUrl) {
+          onImage(imageUrl);
+          return;
+        }
         const text = extractTextFromEvent(parsed);
         if (text) fullText += text;
       }
     }
   } else {
-    // 非流式响应
     const plainText = await response.text();
     const parsed = safeJsonParse(plainText);
     if (parsed) {
+      const imageUrl = extractImageUrlFromPayload(parsed);
+      if (imageUrl) {
+        onImage(imageUrl);
+        return;
+      }
       fullText = extractTextFromEvent(parsed) || plainText;
     } else {
       fullText = plainText;
     }
   }
 
-  // 从完整文本中提取图片 URL
   const imageUrl = extractImageUrlFromContent(fullText);
   if (imageUrl) {
     onImage(imageUrl);
     return;
   }
 
-  // 如果文本本身就是 base64 图片数据
   if (fullText.includes('data:image/') || fullText.includes('base64')) {
     const dataMatch = fullText.match(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/);
     if (dataMatch) {
@@ -545,6 +625,18 @@ export async function generateImage({ settings, prompt, referenceImage, size, qu
     }
   }
 
-  // 如果没有提取到图片，可能是纯文本描述，也把完整内容传回
   throw new Error(`图片生成完成但未提取到图片。接口返回内容：${fullText.slice(0, 200)}`);
+}
+
+export async function generateImage({ settings, prompt, referenceImage, size, quality, signal, onImage }) {
+  const apiMode = settings.drawApiMode || 'images';
+  const url = resolveDrawProxyUrl(settings, apiMode);
+  const headers = buildDrawHeaders(settings, apiMode);
+  const model = 'gpt-image-2';
+
+  if (apiMode === 'chat') {
+    return generateImageViaChatApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage });
+  }
+
+  return generateImageViaImagesApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage });
 }

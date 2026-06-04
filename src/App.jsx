@@ -41,6 +41,11 @@ const DRAW_QUALITY_OPTIONS = [
   { value: 'high', label: '高清' },
 ];
 
+const DRAW_API_MODE_OPTIONS = [
+  { value: 'images', label: 'Images API' },
+  { value: 'chat', label: 'Chat API' },
+];
+
 marked.setOptions({
   breaks: true,
   gfm: true,
@@ -78,6 +83,7 @@ const defaultSettings = {
   fontSize: 'lg',
   drawSize: '1024x1024',
   drawQuality: 'medium',
+  drawApiMode: 'images',
 };
 
 function getTextParts(content) {
@@ -493,6 +499,16 @@ export default function App() {
     return activeMessages.slice(-visibleMessageCount);
   }, [activeMessages, visibleMessageCount]);
   const hasMoreMessages = activeMessages.length > visibleMessageCount;
+  const latestMessageRenderKey = useMemo(() => {
+    const latestMessage = activeMessages[activeMessages.length - 1];
+    if (!latestMessage) return 'empty';
+    return [
+      activeMessages.length,
+      latestMessage.id,
+      getTextParts(latestMessage.content).length,
+      getImageParts(latestMessage.content).length,
+    ].join(':');
+  }, [activeMessages]);
 
   useEffect(() => {
     // 始终同步到 localStorage（即时、无网络开销）
@@ -590,6 +606,17 @@ export default function App() {
     return () => el.removeEventListener('scroll', onScroll);
   }, [checkIsAtBottom, authState]);
 
+  useEffect(() => {
+    if (authState !== 'authenticated') return undefined;
+
+    const rafId = requestAnimationFrame(() => {
+      if (programmaticScrollRef.current) return;
+      setShowScrollToBottom(!checkIsAtBottom());
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [latestMessageRenderKey, visibleMessageCount, checkIsAtBottom, authState]);
+
   // 登录完成后滚到底一次
   useEffect(() => {
     if (authState === 'authenticated') {
@@ -612,36 +639,48 @@ export default function App() {
 
   useEffect(() => {
     const vv = window.visualViewport;
-    if (!vv) return;
-
-    // 检测是否支持 dvh（现代移动浏览器都支持，且能自动处理键盘适配）
-    // 如果支持 dvh，就不需要 JS 干预，CSS 100dvh 会自动适配
-    const supportsDvh = CSS.supports && CSS.supports('height', '100dvh');
-    if (supportsDvh) return;
-
     let rafId = null;
+    let stableWidth = window.innerWidth || document.documentElement.clientWidth;
+    let stableHeight = window.innerHeight || document.documentElement.clientHeight;
+
+    function applyStableHeight() {
+      document.documentElement.style.setProperty('--app-height', `${Math.max(320, Math.round(stableHeight))}px`);
+    }
 
     function onViewportChange() {
       if (rafId) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
-        const shell = document.querySelector('.phone-shell');
-        if (!shell) return;
-        const offsetTop = vv.offsetTop;
-        const visibleHeight = vv.height;
-        const app = document.querySelector('.chat-app');
-        const appPadding = app ? parseFloat(getComputedStyle(app).paddingTop) + parseFloat(getComputedStyle(app).paddingBottom) : 0;
-        const maxHeight = visibleHeight - offsetTop - appPadding;
-        shell.style.maxHeight = `${Math.max(200, maxHeight)}px`;
+        const nextWidth = window.innerWidth || document.documentElement.clientWidth;
+        const nextHeight = window.innerHeight || document.documentElement.clientHeight;
+        const widthChanged = Math.abs(nextWidth - stableWidth) > 24;
+
+        if (widthChanged) {
+          stableWidth = nextWidth;
+          stableHeight = nextHeight;
+        } else if (nextHeight > stableHeight) {
+          stableHeight = nextHeight;
+        }
+
+        applyStableHeight();
+        window.scrollTo(0, 0);
       });
     }
 
-    onViewportChange();
-    vv.addEventListener('resize', onViewportChange);
-    vv.addEventListener('scroll', onViewportChange);
+    applyStableHeight();
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('orientationchange', onViewportChange);
+    window.addEventListener('focusin', onViewportChange);
+    window.addEventListener('focusout', onViewportChange);
+    vv?.addEventListener('resize', onViewportChange);
+    vv?.addEventListener('scroll', onViewportChange);
     return () => {
-      vv.removeEventListener('resize', onViewportChange);
-      vv.removeEventListener('scroll', onViewportChange);
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('orientationchange', onViewportChange);
+      window.removeEventListener('focusin', onViewportChange);
+      window.removeEventListener('focusout', onViewportChange);
+      vv?.removeEventListener('resize', onViewportChange);
+      vv?.removeEventListener('scroll', onViewportChange);
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, []);
@@ -1897,6 +1936,18 @@ export default function App() {
                 </div>
               )}
               <div className="draw-config">
+                <label className="draw-config-item">
+                  <span>模式</span>
+                  <select
+                    className="draw-config-select"
+                    value={settings.drawApiMode || 'images'}
+                    onChange={(e) => setSettings((s) => ({ ...s, drawApiMode: e.target.value }))}
+                  >
+                    {DRAW_API_MODE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <label className="draw-config-item">
                   <span>尺寸</span>
                   <select

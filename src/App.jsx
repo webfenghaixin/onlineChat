@@ -398,7 +398,7 @@ export default function App() {
   const [drawerTab, setDrawerTab] = useState('history');
   const [copiedMessageId, setCopiedMessageId] = useState('');
   const [visibleMessageCount, setVisibleMessageCount] = useState(50);
-  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showCompleteHint, setShowCompleteHint] = useState(false);
   const [authState, setAuthState] = useState(() => (getToken() ? 'loading' : 'auth-form'));
   const [authTab, setAuthTab] = useState('login');
@@ -414,6 +414,9 @@ export default function App() {
   const messagesEndRef = useRef(null);
   const messageListRef = useRef(null);
   const cloudSaveTimerRef = useRef(null);
+  const programmaticScrollRef = useRef(false);
+  const shouldAutoScrollRef = useRef(true);
+  const cloudSavingRef = useRef(false);
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
@@ -436,17 +439,39 @@ export default function App() {
   const hasMoreMessages = activeMessages.length > visibleMessageCount;
 
   useEffect(() => {
+    // 始终同步到 localStorage（即时、无网络开销）
     saveState({
       settings,
       conversations,
       activeConversationId,
     });
-    if (authState !== 'authenticated') return;
+
+    // 云端同步条件：已登录 + 非流式输出中 + 无正在进行的同步
+    if (authState !== 'authenticated' || isSending || cloudSavingRef.current) return;
+
     clearTimeout(cloudSaveTimerRef.current);
     cloudSaveTimerRef.current = setTimeout(() => {
-      saveToCloud({ settings, conversations, activeConversationId }).catch(() => {});
-    }, 3000);
-  }, [settings, conversations, activeConversationId, authState]);
+      if (cloudSavingRef.current) return;
+      cloudSavingRef.current = true;
+      saveToCloud({ settings, conversations, activeConversationId })
+        .catch(() => {})
+        .finally(() => { cloudSavingRef.current = false; });
+    }, 8000);
+  }, [settings, conversations, activeConversationId, authState, isSending]);
+
+  // 流式输出结束后立即触发一次云端同步
+  useEffect(() => {
+    if (!isSending && authState === 'authenticated') {
+      clearTimeout(cloudSaveTimerRef.current);
+      cloudSaveTimerRef.current = setTimeout(() => {
+        if (cloudSavingRef.current) return;
+        cloudSavingRef.current = true;
+        saveToCloud({ settings, conversations, activeConversationId })
+          .catch(() => {})
+          .finally(() => { cloudSavingRef.current = false; });
+      }, 2000);
+    }
+  }, [isSending, authState, settings, conversations, activeConversationId]);
 
   useEffect(() => {
     if (authState !== 'loading') return;
@@ -470,35 +495,53 @@ export default function App() {
     return () => { cancelled = true; };
   }, [authState]);
 
-  // 判断是否在底部（阈值 60px）
+  // 判断是否在底部（阈值 80px）
   const checkIsAtBottom = useCallback(() => {
     const el = messageListRef.current;
     if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }, []);
 
   // 滚动到底部
   const scrollToBottom = useCallback(() => {
+    programmaticScrollRef.current = true;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    shouldAutoScrollRef.current = true;
+    setShowScrollToBottom(false);
+    // 程序滚动完成后重置标记
+    setTimeout(() => { programmaticScrollRef.current = false; }, 300);
   }, []);
 
-  // 监听滚动位置
+  // 监听用户滚动：区分用户滚动和程序滚动
   useEffect(() => {
     const el = messageListRef.current;
     if (!el) return;
     const onScroll = () => {
-      setIsAtBottom(checkIsAtBottom());
+      if (programmaticScrollRef.current) return;
+      const atBottom = checkIsAtBottom();
+      shouldAutoScrollRef.current = atBottom;
+      setShowScrollToBottom(!atBottom);
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, [checkIsAtBottom]);
 
-  // 智能滚动：用户在底部时跟随新消息，不在底部时不强制
+  // 智能滚动：只有 shouldAutoScroll 为 true 时跟随
   useEffect(() => {
-    if (isAtBottom) {
-      scrollToBottom();
+    if (shouldAutoScrollRef.current) {
+      programmaticScrollRef.current = true;
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      setTimeout(() => { programmaticScrollRef.current = false; }, 300);
     }
-  }, [activeMessages, drawerOpen, drawerTab, isAtBottom, scrollToBottom]);
+  }, [activeMessages, drawerOpen, drawerTab]);
+
+  // 新消息发送时重置为跟随模式
+  useEffect(() => {
+    if (isSending) {
+      shouldAutoScrollRef.current = true;
+      setShowScrollToBottom(false);
+    }
+  }, [isSending]);
 
   useEffect(() => {
     return () => {
@@ -513,8 +556,12 @@ export default function App() {
     function onViewportResize() {
       const app = document.querySelector('.chat-app');
       if (!app) return;
-      // 当虚拟键盘弹出时，visualViewport.height 会变小
-      // 使用 visualViewport 的高度来确保布局正确
+      // iOS Safari 键盘弹出时，visualViewport 的 offsetTop 和 height 会变化
+      // 用 fixed 定位 + offsetTop/height 确保应用始终在可见区域内
+      app.style.position = 'fixed';
+      app.style.top = `${vv.offsetTop}px`;
+      app.style.left = `${vv.offsetLeft}px`;
+      app.style.width = `${vv.width}px`;
       app.style.height = `${vv.height}px`;
     }
 
@@ -1259,7 +1306,7 @@ export default function App() {
             )}
           </section>
           <Scrollbar scrollRef={messageListRef} />
-          {!isAtBottom && (
+          {showScrollToBottom && (
             <button
               type="button"
               className="scroll-to-bottom-button"

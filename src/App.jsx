@@ -526,22 +526,14 @@ export default function App() {
     return () => el.removeEventListener('scroll', onScroll);
   }, [checkIsAtBottom]);
 
-  // 智能滚动：只有 shouldAutoScroll 为 true 时跟随
+  // 只在非流式输出时跟随滚动（切换对话、开关抽屉等场景）
   useEffect(() => {
-    if (shouldAutoScrollRef.current) {
+    if (!isSending && shouldAutoScrollRef.current) {
       programmaticScrollRef.current = true;
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
       setTimeout(() => { programmaticScrollRef.current = false; }, 300);
     }
-  }, [activeMessages, drawerOpen, drawerTab]);
-
-  // 新消息发送时重置为跟随模式
-  useEffect(() => {
-    if (isSending) {
-      shouldAutoScrollRef.current = true;
-      setShowScrollToBottom(false);
-    }
-  }, [isSending]);
+  }, [activeMessages.length, drawerOpen, drawerTab, isSending]);
 
   useEffect(() => {
     return () => {
@@ -553,24 +545,29 @@ export default function App() {
     const vv = window.visualViewport;
     if (!vv) return;
 
-    function onViewportResize() {
-      const app = document.querySelector('.chat-app');
-      if (!app) return;
-      // iOS Safari 键盘弹出时，visualViewport 的 offsetTop 和 height 会变化
-      // 用 fixed 定位 + offsetTop/height 确保应用始终在可见区域内
-      app.style.position = 'fixed';
-      app.style.top = `${vv.offsetTop}px`;
-      app.style.left = `${vv.offsetLeft}px`;
-      app.style.width = `${vv.width}px`;
-      app.style.height = `${vv.height}px`;
+    let rafId = null;
+
+    function onViewportChange() {
+      // 用 rAF 合并同帧内的多次事件，避免抖动
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const app = document.querySelector('.chat-app');
+        if (!app) return;
+        app.style.top = `${vv.offsetTop}px`;
+        app.style.left = `${vv.offsetLeft}px`;
+        app.style.width = `${vv.width}px`;
+        app.style.height = `${vv.height}px`;
+      });
     }
 
-    onViewportResize();
-    vv.addEventListener('resize', onViewportResize);
-    vv.addEventListener('scroll', onViewportResize);
+    onViewportChange();
+    vv.addEventListener('resize', onViewportChange);
+    vv.addEventListener('scroll', onViewportChange);
     return () => {
-      vv.removeEventListener('resize', onViewportResize);
-      vv.removeEventListener('scroll', onViewportResize);
+      vv.removeEventListener('resize', onViewportChange);
+      vv.removeEventListener('scroll', onViewportChange);
+      if (rafId) cancelAnimationFrame(rafId);
     };
   }, []);
 
@@ -1301,9 +1298,6 @@ export default function App() {
               />
             ))}
             <div ref={messagesEndRef} />
-            {showCompleteHint && !isSending && (
-              <div className="complete-hint">回答完成</div>
-            )}
           </section>
           <Scrollbar scrollRef={messageListRef} />
           {showScrollToBottom && (
@@ -1319,6 +1313,9 @@ export default function App() {
         </div>
 
         <footer className="composer-panel">
+          {showCompleteHint && !isSending && (
+            <div className="complete-hint">回答完成</div>
+          )}
           {errorText && <div className="error-banner">{errorText}</div>}
 
           {pendingImage && (

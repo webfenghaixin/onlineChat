@@ -415,7 +415,6 @@ export default function App() {
   const messageListRef = useRef(null);
   const cloudSaveTimerRef = useRef(null);
   const programmaticScrollRef = useRef(false);
-  const shouldAutoScrollRef = useRef(true);
   const cloudSavingRef = useRef(false);
 
   const activeConversation = conversations.find(
@@ -502,38 +501,47 @@ export default function App() {
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }, []);
 
-  // 滚动到底部
+  // 滚动到底部（用户点击按钮时调用）
   const scrollToBottom = useCallback(() => {
     programmaticScrollRef.current = true;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    shouldAutoScrollRef.current = true;
     setShowScrollToBottom(false);
-    // 程序滚动完成后重置标记
     setTimeout(() => { programmaticScrollRef.current = false; }, 300);
   }, []);
 
-  // 监听用户滚动：区分用户滚动和程序滚动
+  // 程序主动滚到底部（登录完成、切换对话等）
+  const forceScrollToBottom = useCallback(() => {
+    programmaticScrollRef.current = true;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    setShowScrollToBottom(false);
+    setTimeout(() => { programmaticScrollRef.current = false; }, 300);
+  }, []);
+
+  // 监听用户滚动：只在非程序滚动时更新按钮状态
   useEffect(() => {
     const el = messageListRef.current;
     if (!el) return;
     const onScroll = () => {
       if (programmaticScrollRef.current) return;
-      const atBottom = checkIsAtBottom();
-      shouldAutoScrollRef.current = atBottom;
-      setShowScrollToBottom(!atBottom);
+      setShowScrollToBottom(!checkIsAtBottom());
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
   }, [checkIsAtBottom]);
 
-  // 只在非流式输出时跟随滚动（切换对话、开关抽屉等场景）
+  // 登录完成后滚到底一次
   useEffect(() => {
-    if (!isSending && shouldAutoScrollRef.current) {
-      programmaticScrollRef.current = true;
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      setTimeout(() => { programmaticScrollRef.current = false; }, 300);
+    if (authState === 'authenticated') {
+      forceScrollToBottom();
     }
-  }, [activeMessages.length, drawerOpen, drawerTab, isSending]);
+  }, [authState, forceScrollToBottom]);
+
+  // 切换对话时滚到底一次
+  useEffect(() => {
+    if (authState === 'authenticated') {
+      forceScrollToBottom();
+    }
+  }, [activeConversationId, authState, forceScrollToBottom]);
 
   useEffect(() => {
     return () => {
@@ -548,16 +556,20 @@ export default function App() {
     let rafId = null;
 
     function onViewportChange() {
-      // 用 rAF 合并同帧内的多次事件，避免抖动
       if (rafId) return;
       rafId = requestAnimationFrame(() => {
         rafId = null;
+        const shell = document.querySelector('.phone-shell');
+        if (!shell) return;
+        // 只调整 phone-shell 的高度，不动 chat-app
+        // chat-app 保持全屏不变，phone-shell 缩小到可见区域
+        const offsetTop = vv.offsetTop;
+        const visibleHeight = vv.height;
+        // phone-shell 在 chat-app 内有 padding，需要减去
         const app = document.querySelector('.chat-app');
-        if (!app) return;
-        app.style.top = `${vv.offsetTop}px`;
-        app.style.left = `${vv.offsetLeft}px`;
-        app.style.width = `${vv.width}px`;
-        app.style.height = `${vv.height}px`;
+        const appPadding = app ? parseFloat(getComputedStyle(app).paddingTop) + parseFloat(getComputedStyle(app).paddingBottom) : 0;
+        const maxHeight = visibleHeight - offsetTop - appPadding;
+        shell.style.maxHeight = `${Math.max(200, maxHeight)}px`;
       });
     }
 

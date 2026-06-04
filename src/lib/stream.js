@@ -1,4 +1,7 @@
+import { getToken } from './auth';
+
 const SSE_BOUNDARY = '\n\n';
+const DRAW_TASK_POLL_INTERVAL_MS = 1000;
 
 function safeJsonParse(value) {
   try {
@@ -429,6 +432,18 @@ function extractImageUrlFromContent(content) {
   return null;
 }
 
+function resolveDrawTaskUrl(settings, path) {
+  const proxyPath = settings.proxyPath?.trim() || '/api/proxy';
+  let basePath = proxyPath.replace(/\/proxy\/?$/, '').replace(/\/proxy$/, '');
+  if (!basePath) basePath = '';
+
+  const taskPath = `${basePath}/draw-task/${path}`;
+  if (/^https?:\/\//i.test(taskPath)) {
+    return taskPath;
+  }
+  return taskPath.startsWith('/') ? taskPath : `/${taskPath}`;
+}
+
 function extractImageUrlFromPayload(payload) {
   if (!payload) return null;
 
@@ -493,6 +508,109 @@ function createNoImageError(rawText, apiModeLabel = '当前模式') {
   }
 
   return new Error(`${apiModeLabel} 没有返回可用图片。请稍后重试，或切换到 Images API 模式。`);
+}
+
+function getAuthorizedHeaders() {
+  const token = getToken();
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+function abortableDelay(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+
+    const timer = window.setTimeout(resolve, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+async function readJsonResponse(response) {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return { error: text || `请求失败 (${response.status})` };
+  }
+}
+
+async function generateImageViaTaskApi({
+  settings,
+  prompt,
+  referenceImage,
+  size,
+  quality,
+  signal,
+  onImage,
+  onTaskStart,
+  taskMetadata,
+}) {
+  const apiMode = settings.drawApiMode || 'images';
+  const startResponse = await fetch(resolveDrawTaskUrl(settings, 'start'), {
+    method: 'POST',
+    headers: getAuthorizedHeaders(),
+    body: JSON.stringify({
+      apiMode,
+      source: settings.source || 'rightcode',
+      prompt,
+      referenceImage,
+      size: size || '1024x1024',
+      quality: quality || 'medium',
+      model: 'gpt-image-2',
+      taskMetadata,
+    }),
+    signal,
+  });
+
+  const startData = await readJsonResponse(startResponse);
+  if (!startResponse.ok) {
+    throw new Error(startData.error || `创建绘图任务失败 (${startResponse.status})`);
+  }
+
+  const taskId = startData.taskId;
+  if (!taskId) {
+    throw new Error('创建绘图任务失败：服务端没有返回任务 ID。');
+  }
+  onTaskStart?.(taskId);
+
+  while (true) {
+    await abortableDelay(DRAW_TASK_POLL_INTERVAL_MS, signal);
+
+    const statusUrl = new URL(resolveDrawTaskUrl(settings, 'status'), window.location.origin);
+    statusUrl.searchParams.set('id', taskId);
+
+    const statusResponse = await fetch(statusUrl.toString(), {
+      method: 'GET',
+      headers: getAuthorizedHeaders(),
+      signal,
+    });
+    const statusData = await readJsonResponse(statusResponse);
+
+    if (!statusResponse.ok) {
+      throw new Error(statusData.error || `查询绘图任务失败 (${statusResponse.status})`);
+    }
+
+    if (statusData.status === 'succeeded' && statusData.imageUrl) {
+      onImage(statusData.imageUrl);
+      return;
+    }
+
+    if (statusData.status === 'failed') {
+      throw new Error(statusData.error || '图片生成失败，请稍后重试。');
+    }
+  }
 }
 
 // /v1/images/generations 模式：非流式，直接返回 JSON
@@ -648,8 +766,33 @@ async function generateImageViaChatApi({ url, headers, model, prompt, referenceI
   throw createNoImageError(fullText, 'Chat API');
 }
 
-export async function generateImage({ settings, prompt, referenceImage, size, quality, signal, onImage }) {
+export async function generateImage({
+  settings,
+  prompt,
+  referenceImage,
+  size,
+  quality,
+  signal,
+  onImage,
+  onTaskStart,
+  taskMetadata,
+}) {
   const apiMode = settings.drawApiMode || 'images';
+
+  if (settings.useProxy) {
+    return generateImageViaTaskApi({
+      settings,
+      prompt,
+      referenceImage,
+      size,
+      quality,
+      signal,
+      onImage,
+      onTaskStart,
+      taskMetadata,
+    });
+  }
+
   const url = resolveDrawProxyUrl(settings, apiMode);
   const headers = buildDrawHeaders(settings, apiMode);
   const model = 'gpt-image-2';

@@ -215,6 +215,12 @@ function formatDateTime(timestamp) {
   }).format(timestamp);
 }
 
+function formatDuration(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 function buildConversationTitle(messages) {
   const firstUserMessage = messages.find((message) => message.role === 'user');
   if (!firstUserMessage) {
@@ -452,6 +458,7 @@ export default function App() {
   const [drawDrawerOpen, setDrawDrawerOpen] = useState(false);
   const [drawLimitWarning, setDrawLimitWarning] = useState(false);
   const [drawPendingImage, setDrawPendingImage] = useState(null);
+  const [drawElapsedSeconds, setDrawElapsedSeconds] = useState(0);
 
   const abortControllerRef = useRef(null);
   const composerRef = useRef(null);
@@ -570,6 +577,21 @@ export default function App() {
       });
     return () => { cancelled = true; };
   }, [authState]);
+
+  useEffect(() => {
+    if (!isGenerating) {
+      setDrawElapsedSeconds(0);
+      return undefined;
+    }
+
+    setDrawElapsedSeconds(0);
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setDrawElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [isGenerating]);
 
   // 判断是否在底部（阈值 80px）
   const checkIsAtBottom = useCallback(() => {
@@ -797,6 +819,7 @@ export default function App() {
       abortControllerRef.current?.abort();
       abortControllerRef.current = null;
       setIsGenerating(false);
+      setDrawElapsedSeconds(0);
     }
     setDrawMode(false);
     setErrorText('');
@@ -899,6 +922,7 @@ export default function App() {
 
     setErrorText('');
     setIsGenerating(true);
+    setDrawElapsedSeconds(0);
     setStatusText('正在生成图片');
 
     let targetConvId = activeDrawConversationId;
@@ -950,6 +974,23 @@ export default function App() {
         size: settings.drawSize || '1024x1024',
         quality: settings.drawQuality || 'medium',
         signal: controller.signal,
+        taskMetadata: {
+          conversationId: targetConvId,
+          conversationTitle: activeDrawConversation?.id === targetConvId
+            ? activeDrawConversation.title
+            : prompt.slice(0, 18),
+          activeDrawConversationId: targetConvId,
+          userMessage,
+          assistantMessage,
+        },
+        onTaskStart: (taskId) => {
+          updateDrawConversation(targetConvId, (conv) => ({
+            ...conv,
+            messages: conv.messages.map((m) =>
+              m.id === assistantMessage.id ? { ...m, taskId } : m,
+            ),
+          }));
+        },
         onImage: (imageUrl) => {
           updateDrawConversation(targetConvId, (conv) => ({
             ...conv,
@@ -990,23 +1031,42 @@ export default function App() {
   }
 
   async function downloadImage(imageUrl, prompt) {
+    const fileName = `draw_${prompt.slice(0, 20).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${Date.now()}.png`;
+
     try {
       const response = await fetch(imageUrl);
       const blob = await response.blob();
+      const file = new File([blob], fileName, { type: blob.type || 'image/png' });
+
+      if (navigator.canShare?.({ files: [file] }) && navigator.share) {
+        await navigator.share({
+          files: [file],
+          title: '保存图片',
+          text: '请选择“保存图片”或“存储到相册”。',
+        });
+        return;
+      }
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `draw_${prompt.slice(0, 20).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_')}_${Date.now()}.png`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      window.alert('已触发下载。如果手机没有自动保存到相册，请在下载记录中打开图片并保存到相册。');
     } catch {
       window.open(imageUrl, '_blank');
+      window.alert('已打开图片，请长按图片选择“保存到相册”。');
     }
   }
 
   function deleteDrawMessage(conversationId, messageId) {
+    if (!window.confirm('确定删除这张图片吗？对应的提示词记录也会一起删除。')) {
+      return;
+    }
+
     updateDrawConversation(conversationId, (conv) => {
       const idx = conv.messages.findIndex((m) => m.id === messageId);
       if (idx < 0) return conv;
@@ -1179,7 +1239,7 @@ export default function App() {
       setIsSending(false);
       // 回答完成提示
       setShowCompleteHint(true);
-      setTimeout(() => setShowCompleteHint(false), 3000);
+      setTimeout(() => setShowCompleteHint(false), 6000);
     }
   }
 
@@ -1831,7 +1891,7 @@ export default function App() {
                 <h1>{activeDrawConversation?.title || 'AI 画图'}</h1>
                 <p>
                   <span className={classNames('status-dot', isGenerating && 'status-dot-live')} />
-                  {isGenerating ? '生成中' : `已存 ${drawImageCount}/20 张`}
+                  {isGenerating ? `生成中 ${formatDuration(drawElapsedSeconds)}` : `已存 ${drawImageCount}/20 张`}
                 </p>
               </div>
 
@@ -1889,7 +1949,7 @@ export default function App() {
                           <img className="draw-result-image" src={msg.imageUrl} alt={msg.prompt} />
                           <div className="draw-result-actions">
                             <button className="tool-button" type="button" onClick={() => downloadImage(msg.imageUrl, msg.prompt)}>
-                              保存
+                              保存到相册
                             </button>
                             <button className="tool-button tool-button-retry" type="button" onClick={() => deleteDrawMessage(activeDrawConversation.id, msg.id)}>
                               删除
@@ -1925,7 +1985,7 @@ export default function App() {
                         <div className="message-bubble">
                           <div className="draw-loading-inline">
                             <div className="draw-loading-spinner" />
-                            <span>正在生成图片...</span>
+                            <span>正在生成图片，已等待 {formatDuration(drawElapsedSeconds)}</span>
                           </div>
                         </div>
                       </article>
@@ -1938,6 +1998,12 @@ export default function App() {
             </div>
 
             <footer className="composer-panel">
+              {isGenerating && (
+                <div className="draw-waiting-bar">
+                  <span className="draw-waiting-dot" />
+                  <span>正在生成，已等待 {formatDuration(drawElapsedSeconds)}</span>
+                </div>
+              )}
               {drawPendingImage && (
                 <div className="pending-image-card">
                   <img className="pending-image-preview" src={drawPendingImage.url} alt="参考图" />

@@ -4,7 +4,10 @@
   "framework": "vite",
   "functions": {
     "api/draw.js": {
-      "maxDuration": 300
+      "maxDuration": 600
+    },
+    "api/draw-task/start.js": {
+      "maxDuration": 600
     }
   },
   "rewrites": [

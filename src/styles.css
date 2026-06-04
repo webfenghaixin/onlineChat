@@ -906,6 +906,28 @@ button:disabled {
   font-size: 14px;
 }
 
+.draw-waiting-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(17, 97, 92, 0.07);
+  color: var(--brand-strong);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.draw-waiting-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: pulse 1.15s ease-in-out infinite;
+}
+
 .draw-empty {
   display: flex;
   flex-direction: column;

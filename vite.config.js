@@ -166,6 +166,16 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: true,
         },
+        '/api/draw-task': {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: true,
+        },
+        '/api/draw': {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: true,
+        },
       },
     },
     build: {

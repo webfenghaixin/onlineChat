@@ -1,5 +1,5 @@
 export const config = {
-  maxDuration: 300,
+  maxDuration: 600,
 };
 
 const CORS_HEADERS = {

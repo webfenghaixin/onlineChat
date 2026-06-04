@@ -585,6 +585,10 @@ async function generateImageViaTaskApi({
   }
   onTaskStart?.(taskId);
 
+  return pollDrawTask({ settings, taskId, signal, onImage });
+}
+
+export async function pollDrawTask({ settings, taskId, signal, onImage }) {
   while (true) {
     await abortableDelay(DRAW_TASK_POLL_INTERVAL_MS, signal);
 

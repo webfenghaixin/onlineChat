@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
-import { streamChatCompletion, generateImage } from './lib/stream';
+import { streamChatCompletion, generateImage, pollDrawTask } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername } from './lib/auth';
 
 const STORAGE_KEY = 'online-chat-h5-state-v7';
@@ -470,6 +470,7 @@ export default function App() {
   const programmaticScrollRef = useRef(false);
   const cloudSavingRef = useRef(false);
   const drawFileInputRef = useRef(null);
+  const resumedDrawTasksRef = useRef(new Set());
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
@@ -611,6 +612,62 @@ export default function App() {
 
     return () => window.clearInterval(timer);
   }, [isGenerating]);
+
+  useEffect(() => {
+    if (authState !== 'authenticated') return undefined;
+
+    const pendingTasks = [];
+    for (const conversation of drawConversations) {
+      for (const message of conversation.messages || []) {
+        if (
+          message.role === 'assistant' &&
+          message.taskId &&
+          !message.imageUrl &&
+          !message.error &&
+          !resumedDrawTasksRef.current.has(message.taskId)
+        ) {
+          pendingTasks.push({
+            conversationId: conversation.id,
+            messageId: message.id,
+            taskId: message.taskId,
+          });
+        }
+      }
+    }
+
+    if (!pendingTasks.length) return undefined;
+
+    pendingTasks.forEach((task) => {
+      resumedDrawTasksRef.current.add(task.taskId);
+      const controller = new AbortController();
+
+      pollDrawTask({
+        settings,
+        taskId: task.taskId,
+        signal: controller.signal,
+        onImage: (imageUrl) => {
+          updateDrawConversation(task.conversationId, (conv) => ({
+            ...conv,
+            messages: conv.messages.map((message) =>
+              message.id === task.messageId ? { ...message, imageUrl, error: undefined } : message,
+            ),
+          }));
+        },
+      }).catch((error) => {
+        if (error.name === 'AbortError') return;
+        updateDrawConversation(task.conversationId, (conv) => ({
+          ...conv,
+          messages: conv.messages.map((message) =>
+            message.id === task.messageId
+              ? { ...message, error: error.message || '图片生成失败，请稍后重试。' }
+              : message,
+          ),
+        }));
+      });
+
+    });
+    return undefined;
+  }, [authState, drawConversations, settings]);
 
   // 判断是否在底部（阈值 80px）
   const checkIsAtBottom = useCallback(() => {

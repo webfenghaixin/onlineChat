@@ -1,8 +1,9 @@
 export const config = {
-  maxDuration: 30,
+  maxDuration: 300,
 };
 
 import { createRedis, getRedisJson, verifyJWT } from '../lib/auth-utils.js';
+import { runTask } from './start.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -69,10 +70,27 @@ export default async function handler(req, res) {
     return;
   }
 
-  const task = await getRedisJson(redis, `drawTask:${auth.username}:${taskId}`);
+  const taskKey = `drawTask:${auth.username}:${taskId}`;
+  let task = await getRedisJson(redis, taskKey);
   if (!task) {
     sendJson(res, 404, { error: '任务不存在或已过期' });
     return;
+  }
+
+  if ((task.status === 'queued' || task.status === 'running') && !task.imageUrl && !task.error) {
+    const lockKey = `drawTaskLock:${auth.username}:${taskId}`;
+    const lockAcquired = await redis.set(lockKey, '1', { nx: true, ex: 600 });
+    if (lockAcquired) {
+      const envKey = task.options?.source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
+      await runTask({
+        redis,
+        taskKey,
+        task,
+        apiKey: process.env[envKey] || '',
+      });
+      task = await getRedisJson(redis, taskKey);
+      await redis.del(lockKey).catch(() => {});
+    }
   }
 
   sendJson(res, 200, {

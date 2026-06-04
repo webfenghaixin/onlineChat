@@ -4,6 +4,7 @@ export const config = {
 
 import { createRedis, getRedisJson, setRedisJson, verifyJWT } from '../lib/auth-utils.js';
 import { cleanDrawOptions, runDrawRequest } from '../lib/draw-utils.js';
+import { waitUntil } from '@vercel/functions';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -144,7 +145,7 @@ async function upsertDrawTaskRecord(redis, username, metadata, patch = {}) {
   });
 }
 
-async function runTask({ redis, taskKey, task, apiKey }) {
+export async function runTask({ redis, taskKey, task, apiKey }) {
   const runningTask = {
     ...task,
     status: 'running',
@@ -244,12 +245,7 @@ export default async function handler(req, res) {
 
   await setTask(redis, taskKey, task);
   await upsertDrawTaskRecord(redis, auth.username, metadata);
-  const taskPromise = runTask({ redis, taskKey, task, apiKey });
-  if (typeof globalThis.waitUntil === 'function') {
-    globalThis.waitUntil(taskPromise);
-  } else {
-    void taskPromise;
-  }
+  waitUntil(runTask({ redis, taskKey, task, apiKey }));
 
   sendJson(res, 202, {
     taskId,

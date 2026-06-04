@@ -8,6 +8,9 @@
     },
     "api/draw-task/start.js": {
       "maxDuration": 300
+    },
+    "api/draw-task/status.js": {
+      "maxDuration": 300
     }
   },
   "rewrites": [

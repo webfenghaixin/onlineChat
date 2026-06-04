@@ -1265,7 +1265,7 @@ export default function App() {
       setIsSending(false);
       // 回答完成提示
       setShowCompleteHint(true);
-      setTimeout(() => setShowCompleteHint(false), 6000);
+      setTimeout(() => setShowCompleteHint(false), 3000);
     }
   }
 

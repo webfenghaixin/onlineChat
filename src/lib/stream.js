@@ -389,7 +389,7 @@ function resolveDrawProxyUrl(settings) {
     }
     return drawPath.startsWith('/') ? drawPath : `/${drawPath}`;
   }
-  return 'https://www.right.codes/draw';
+  return 'https://www.right.codes/draw/v1/chat/completions';
 }
 
 function buildDrawHeaders(settings) {
@@ -406,12 +406,45 @@ function buildDrawHeaders(settings) {
   return headers;
 }
 
+function extractImageUrlFromContent(content) {
+  if (!content || typeof content !== 'string') return null;
+
+  // 匹配 markdown 图片语法 ![...](url)
+  const mdMatch = content.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
+  if (mdMatch) return mdMatch[1];
+
+  // 匹配 markdown 图片语法 ![...](data:image/...)
+  const mdDataMatch = content.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^\s)]+)\)/);
+  if (mdDataMatch) return mdDataMatch[1];
+
+  // 匹配纯 URL（以 http 开头，常见图片后缀或不含后缀的 CDN 链接）
+  const urlMatch = content.match(/(https?:\/\/[^\s"'<>]+\.(?:png|jpg|jpeg|webp|gif)[^\s"'<>]*)/i);
+  if (urlMatch) return urlMatch[1];
+
+  // 匹配 data:image base64
+  const dataMatch = content.match(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/);
+  if (dataMatch) return dataMatch[1];
+
+  return null;
+}
+
 export async function generateImage({ settings, prompt, size, quality, signal, onImage }) {
   const url = resolveDrawProxyUrl(settings);
+
+  // 使用 chat completions 格式
+  const sizeHint = size ? `，图片尺寸${size}` : '';
+  const qualityHint = quality ? `，画质${quality}` : '';
+  const userContent = `请根据以下描述生成图片：${prompt}${sizeHint}${qualityHint}`;
+
   const body = JSON.stringify({
     model: 'gpt-image-2',
-    prompt,
-    n: 1,
+    messages: [
+      {
+        role: 'user',
+        content: userContent,
+      },
+    ],
+    stream: true,
     size: size || '1024x1024',
     quality: quality || 'medium',
   });
@@ -428,30 +461,78 @@ export async function generateImage({ settings, prompt, size, quality, signal, o
     throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
   }
 
-  const data = await response.json();
+  // 流式读取，收集完整文本后提取图片
+  const contentType = response.headers.get('content-type') || '';
+  let fullText = '';
 
-  // 兼容多种返回格式
-  if (Array.isArray(data?.data) && data.data.length > 0) {
-    const item = data.data[0];
-    if (item.b64_json) {
-      onImage(`data:image/png;base64,${item.b64_json}`);
-      return;
+  if (response.body && (contentType.includes('text/event-stream') || contentType.includes('text/plain'))) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // 解析 SSE 格式
+      while (buffer.includes('\n\n')) {
+        const boundaryIndex = buffer.indexOf('\n\n');
+        const rawEvent = buffer.slice(0, boundaryIndex);
+        buffer = buffer.slice(boundaryIndex + 2);
+
+        const dataLines = rawEvent
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trim());
+
+        const joined = dataLines.join('\n');
+        if (!joined || joined === '[DONE]') continue;
+
+        const parsed = safeJsonParse(joined);
+        if (parsed) {
+          const text = extractTextFromEvent(parsed);
+          if (text) fullText += text;
+        }
+      }
     }
-    if (item.url) {
-      onImage(item.url);
-      return;
+
+    // 处理 buffer 中剩余内容
+    if (buffer.trim()) {
+      const parsed = safeJsonParse(buffer.trim());
+      if (parsed) {
+        const text = extractTextFromEvent(parsed);
+        if (text) fullText += text;
+      }
+    }
+  } else {
+    // 非流式响应
+    const plainText = await response.text();
+    const parsed = safeJsonParse(plainText);
+    if (parsed) {
+      fullText = extractTextFromEvent(parsed) || plainText;
+    } else {
+      fullText = plainText;
     }
   }
 
-  // 兼容直接返回 url 或 b64_json 的情况
-  if (data?.url) {
-    onImage(data.url);
+  // 从完整文本中提取图片 URL
+  const imageUrl = extractImageUrlFromContent(fullText);
+  if (imageUrl) {
+    onImage(imageUrl);
     return;
   }
-  if (data?.b64_json) {
-    onImage(`data:image/png;base64,${data.b64_json}`);
-    return;
+
+  // 如果文本本身就是 base64 图片数据
+  if (fullText.includes('data:image/') || fullText.includes('base64')) {
+    const dataMatch = fullText.match(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/);
+    if (dataMatch) {
+      onImage(dataMatch[1]);
+      return;
+    }
   }
 
-  throw new Error('图片生成接口未返回有效的图片数据。');
+  // 如果没有提取到图片，可能是纯文本描述，也把完整内容传回
+  throw new Error(`图片生成完成但未提取到图片。接口返回内容：${fullText.slice(0, 200)}`);
 }

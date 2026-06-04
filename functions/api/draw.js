@@ -4,7 +4,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const DRAW_ENDPOINT = 'https://www.right.codes/draw';
+const DRAW_ENDPOINT = 'https://www.right.codes/draw/v1/chat/completions';
 
 function jsonResponse(statusCode, body, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {

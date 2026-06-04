@@ -1221,9 +1221,9 @@ export default function App() {
     return (
       <div className="gate-shell">
         <section className="gate-card">
-          {/* <img className="gate-logo" src="/logo-2.png" alt="" />
-          <h1>lightChat</h1> */}
-          <p>正在加载你的数据...</p>
+          <img className="gate-logo" src="/logo-2.png" alt="" />
+          {/* <h1>lightChat</h1> */}
+          <p>loading...</p>
         </section>
       </div>
     );
@@ -1656,7 +1656,7 @@ export default function App() {
 
           <div className="composer-box">
             <button className="upload-button" type="button" onClick={handleUploadClick} aria-label="上传图片">
-              图片
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             </button>
 
             <textarea
@@ -1924,7 +1924,7 @@ export default function App() {
               </div>
               <div className="draw-input-row">
                 <button className="upload-button" type="button" onClick={() => drawFileInputRef.current?.click()} aria-label="上传参考图">
-                  参考图
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 </button>
                 <textarea
                   className="draw-input"

@@ -810,6 +810,11 @@ button:disabled {
 .upload-button {
   color: var(--brand-strong);
   background: rgba(17, 97, 92, 0.08);
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0;
 }
 
 /* 三列 header（聊天页有画图入口） */
@@ -939,6 +944,7 @@ button:disabled {
 .draw-config {
   display: flex;
   gap: 10px;
+  justify-content: center;
 }
 
 .draw-config-item {

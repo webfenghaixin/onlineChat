@@ -527,7 +527,7 @@ export default function App() {
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [checkIsAtBottom]);
+  }, [checkIsAtBottom, authState]);
 
   // 登录完成后滚到底一次
   useEffect(() => {

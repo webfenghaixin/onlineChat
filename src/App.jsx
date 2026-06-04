@@ -553,6 +553,11 @@ export default function App() {
     const vv = window.visualViewport;
     if (!vv) return;
 
+    // 检测是否支持 dvh（现代移动浏览器都支持，且能自动处理键盘适配）
+    // 如果支持 dvh，就不需要 JS 干预，CSS 100dvh 会自动适配
+    const supportsDvh = CSS.supports && CSS.supports('height', '100dvh');
+    if (supportsDvh) return;
+
     let rafId = null;
 
     function onViewportChange() {
@@ -561,11 +566,8 @@ export default function App() {
         rafId = null;
         const shell = document.querySelector('.phone-shell');
         if (!shell) return;
-        // 只调整 phone-shell 的高度，不动 chat-app
-        // chat-app 保持全屏不变，phone-shell 缩小到可见区域
         const offsetTop = vv.offsetTop;
         const visibleHeight = vv.height;
-        // phone-shell 在 chat-app 内有 padding，需要减去
         const app = document.querySelector('.chat-app');
         const appPadding = app ? parseFloat(getComputedStyle(app).paddingTop) + parseFloat(getComputedStyle(app).paddingBottom) : 0;
         const maxHeight = visibleHeight - offsetTop - appPadding;

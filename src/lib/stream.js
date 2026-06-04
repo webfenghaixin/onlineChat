@@ -473,6 +473,28 @@ function extractImageUrlFromPayload(payload) {
   return null;
 }
 
+async function throwDrawResponseError(response) {
+  const errorText = await response.text().catch(() => '请求失败');
+  if (response.status === 504 || /FUNCTION_INVOCATION_TIMEOUT/i.test(errorText)) {
+    throw new Error('图片生成代理超时。绘图生成耗时较长，请稍后重试，或降低质量/换个尺寸再试。');
+  }
+  throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
+}
+
+function createNoImageError(rawText, apiModeLabel = '当前模式') {
+  const text = String(rawText || '').trim();
+
+  if (/excessive\s+system\s+load|system\s+load|Progressing/i.test(text)) {
+    return new Error('绘图服务当前负载较高，图片没有生成完成。请稍后重试，或降低质量/换个尺寸再试。');
+  }
+
+  if (/violat(?:ed|e)|policy|policies|content_filter/i.test(text)) {
+    return new Error('图片请求可能触发了内容策略，服务没有返回图片。请调整提示词后重试。');
+  }
+
+  return new Error(`${apiModeLabel} 没有返回可用图片。请稍后重试，或切换到 Images API 模式。`);
+}
+
 // /v1/images/generations 模式：非流式，直接返回 JSON
 async function generateImageViaImagesApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage }) {
   const body = JSON.stringify({
@@ -492,8 +514,7 @@ async function generateImageViaImagesApi({ url, headers, model, prompt, referenc
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => '请求失败');
-    throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
+    await throwDrawResponseError(response);
   }
 
   const data = await response.json();
@@ -503,7 +524,7 @@ async function generateImageViaImagesApi({ url, headers, model, prompt, referenc
     return;
   }
 
-  throw new Error(`图片生成完成但未提取到图片。接口返回：${JSON.stringify(data).slice(0, 200)}`);
+  throw createNoImageError(JSON.stringify(data).slice(0, 500), 'Images API');
 }
 
 // /v1/chat/completions 模式：流式，从文本中提取图片
@@ -540,8 +561,7 @@ async function generateImageViaChatApi({ url, headers, model, prompt, referenceI
   });
 
   if (!response.ok) {
-    const errorText = await response.text().catch(() => '请求失败');
-    throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
+    await throwDrawResponseError(response);
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -625,7 +645,7 @@ async function generateImageViaChatApi({ url, headers, model, prompt, referenceI
     }
   }
 
-  throw new Error(`图片生成完成但未提取到图片。接口返回内容：${fullText.slice(0, 200)}`);
+  throw createNoImageError(fullText, 'Chat API');
 }
 
 export async function generateImage({ settings, prompt, referenceImage, size, quality, signal, onImage }) {

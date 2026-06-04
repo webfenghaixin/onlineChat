@@ -647,6 +647,19 @@ export default function App() {
       document.documentElement.style.setProperty('--app-height', `${Math.max(320, Math.round(stableHeight))}px`);
     }
 
+    function applyKeyboardOffset() {
+      if (!vv) {
+        document.documentElement.style.setProperty('--keyboard-offset', '0px');
+        return;
+      }
+
+      const keyboardOffset = Math.max(0, stableHeight - vv.height - vv.offsetTop);
+      document.documentElement.style.setProperty(
+        '--keyboard-offset',
+        `${Math.round(keyboardOffset > 80 ? keyboardOffset : 0)}px`,
+      );
+    }
+
     function onViewportChange() {
       if (rafId) return;
       rafId = requestAnimationFrame(() => {
@@ -663,11 +676,13 @@ export default function App() {
         }
 
         applyStableHeight();
+        applyKeyboardOffset();
         window.scrollTo(0, 0);
       });
     }
 
     applyStableHeight();
+    applyKeyboardOffset();
     window.addEventListener('resize', onViewportChange);
     window.addEventListener('orientationchange', onViewportChange);
     window.addEventListener('focusin', onViewportChange);

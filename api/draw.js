@@ -1,5 +1,5 @@
 export const config = {
-  runtime: 'edge',
+  maxDuration: 300,
 };
 
 const CORS_HEADERS = {
@@ -9,46 +9,72 @@ const CORS_HEADERS = {
 };
 
 const DRAW_BASE = 'https://www.right.codes/draw';
+const ALLOWED_DRAW_PATHS = ['/v1/images/generations', '/v1/chat/completions'];
 
-function jsonResponse(statusCode, body, extraHeaders = {}) {
-  return new Response(JSON.stringify(body), {
-    status: statusCode,
-    headers: {
-      ...CORS_HEADERS,
-      'Content-Type': 'application/json; charset=utf-8',
-      ...extraHeaders,
-    },
+function sendJson(res, statusCode, body, extraHeaders = {}) {
+  res.statusCode = statusCode;
+  for (const [key, value] of Object.entries({
+    ...CORS_HEADERS,
+    'Content-Type': 'application/json; charset=utf-8',
+    ...extraHeaders,
+  })) {
+    res.setHeader(key, value);
+  }
+  res.end(JSON.stringify(body));
+}
+
+function readRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+
+    req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
   });
 }
 
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
+function setCorsHeaders(res, extraHeaders = {}) {
+  for (const [key, value] of Object.entries({ ...CORS_HEADERS, ...extraHeaders })) {
+    res.setHeader(key, value);
+  }
+}
+
+export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    setCorsHeaders(res);
+    res.statusCode = 204;
+    res.end();
+    return;
   }
 
-  if (request.method !== 'POST') {
-    return jsonResponse(405, { error: 'Only POST is allowed.' });
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'Only POST is allowed.' });
+    return;
   }
 
-  const source = (request.headers.get('x-source') || 'rightcode').toLowerCase();
+  const source = String(req.headers['x-source'] || 'rightcode').toLowerCase();
   const envKey = source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
   const serverApiKey = process.env[envKey] || '';
 
-  const requestedDrawPath = request.headers.get('x-draw-path') || '/v1/images/generations';
-  const drawPath = ['/v1/images/generations', '/v1/chat/completions'].includes(requestedDrawPath)
+  const requestedDrawPath = String(req.headers['x-draw-path'] || '/v1/images/generations');
+  const drawPath = ALLOWED_DRAW_PATHS.includes(requestedDrawPath)
     ? requestedDrawPath
     : '/v1/images/generations';
   const drawEndpoint = `${DRAW_BASE}${drawPath}`;
 
   let requestBody;
   try {
-    requestBody = await request.text();
-  } catch {
-    return jsonResponse(400, { error: 'Failed to read request body.' });
+    requestBody = await readRequestBody(req);
+  } catch (error) {
+    sendJson(res, 400, {
+      error: 'Failed to read request body.',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    return;
   }
 
   const upstreamHeaders = {
-    'Content-Type': 'application/json',
+    'Content-Type': req.headers['content-type'] || 'application/json',
   };
   if (serverApiKey) {
     upstreamHeaders.Authorization = `Bearer ${serverApiKey}`;
@@ -61,28 +87,31 @@ export default async function handler(request) {
       body: requestBody,
     });
 
-    const responseContentType =
-      upstreamResponse.headers.get('content-type') || 'application/octet-stream';
+    setCorsHeaders(res, {
+      'Content-Type': upstreamResponse.headers.get('content-type') || 'application/octet-stream',
+    });
+    res.statusCode = upstreamResponse.status;
 
-    const responseHeaders = {
-      ...CORS_HEADERS,
-      'Content-Type': responseContentType,
-    };
+    const cacheControl = upstreamResponse.headers.get('cache-control');
+    if (cacheControl) {
+      res.setHeader('Cache-Control', cacheControl);
+    }
 
     if (!upstreamResponse.body) {
       const text = await upstreamResponse.text();
-      return new Response(text, {
-        status: upstreamResponse.status,
-        headers: responseHeaders,
-      });
+      res.end(text);
+      return;
     }
 
-    return new Response(upstreamResponse.body, {
-      status: upstreamResponse.status,
-      headers: responseHeaders,
-    });
+    const reader = upstreamResponse.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+    res.end();
   } catch (error) {
-    return jsonResponse(502, {
+    sendJson(res, 502, {
       error: 'Image generation request failed.',
       detail: error instanceof Error ? error.message : String(error),
     });

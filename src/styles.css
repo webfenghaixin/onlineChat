@@ -84,8 +84,11 @@ button:disabled {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: url('/h5-bg.png') no-repeat center center;
-  background-size: cover;
+  background-color: #ffffff;
+  background-image: url('/h5-bg-top.png'), url('/h5-bg-bottom.png');
+  background-repeat: no-repeat, no-repeat;
+  background-position: top center, bottom center;
+  background-size: 100% auto, 100% auto;
   /* background: linear-gradient(-45deg, #0d9488, #0891b2, #2563eb, #06b6d4, #14b8a6);
   background-size: 400% 400%;
   animation: gateGradient 12s ease infinite; */
@@ -1594,9 +1597,9 @@ button:disabled {
 
   .gate-card {
     position: absolute;
-    top: 41%;
+    top: 50%;
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) translateY(-50%);
     width: 95%;
   }
 

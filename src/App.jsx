@@ -33,6 +33,7 @@ const DRAW_SIZE_OPTIONS = [
   { value: '1024x1024', label: '1:1 方图' },
   { value: '1024x1536', label: '2:3 竖图' },
   { value: '1024x1792', label: '9:16 全屏' },
+  { value: '2048×3072', label: '2K全屏' },
   { value: '1536x1024', label: '3:2 横图' },
 ];
 
@@ -2640,7 +2641,7 @@ export default function App() {
                       <span>尺寸</span>
                       <select
                         className="draw-config-select"
-                        value={settings.drawSize || '1024x1024'}
+                        value={settings.drawSize || '1024x1792'}
                         onChange={(e) => setSettings((s) => ({ ...s, drawSize: e.target.value }))}
                       >
                         {DRAW_SIZE_OPTIONS.map((opt) => (

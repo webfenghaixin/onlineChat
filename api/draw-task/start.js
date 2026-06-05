@@ -69,11 +69,15 @@ function normalizeTaskMetadata(metadata, taskId) {
 
   if (!conversationId || !userMessage?.id || !assistantMessage?.id) return null;
 
+  const sanitizedUserMessage = userMessage.referenceImage
+    ? { ...userMessage, referenceImage: undefined }
+    : userMessage;
+
   return {
     conversationId,
     conversationTitle: String(metadata.conversationTitle || userMessage.content || '新的画图').slice(0, 18),
     activeDrawConversationId: String(metadata.activeDrawConversationId || conversationId),
-    userMessage,
+    userMessage: sanitizedUserMessage,
     assistantMessage: {
       ...assistantMessage,
       taskId,

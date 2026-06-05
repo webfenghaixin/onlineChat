@@ -1,7 +1,31 @@
 import { getToken } from './auth';
 
 const SSE_BOUNDARY = '\n\n';
-const DRAW_TASK_POLL_INTERVAL_MS = 1000;
+const DRAW_TASK_POLL_INTERVAL_MS = 10000;
+const DRAW_TASK_POLL_INTERVAL_AFTER_30S_MS = 3000;
+const DRAW_TASK_SLOW_POLL_WINDOW_MS = 30000;
+
+function normalizeDrawErrorMessage(rawText, status, apiModeLabel = '当前模式') {
+  const text = String(rawText || '').trim();
+
+  if (status === 413 || /FUNCTION_PAYLOAD_TOO_LARGE|Request Entity Too Large/i.test(text)) {
+    return '参考图过大，画图请求超过平台大小限制。请换一张更小的图片，或先裁剪/压缩后再试。';
+  }
+
+  if (status === 504 || /FUNCTION_INVOCATION_TIMEOUT/i.test(text)) {
+    return '图片生成代理超时。绘图生成耗时较长，请稍后重试，或降低质量/换个尺寸再试。';
+  }
+
+  if (/excessive\s+system\s+load|system\s+load|Progressing/i.test(text)) {
+    return '绘图服务当前负载较高，图片还没有成功生成。请稍后重试，或降低质量/换个尺寸再试。';
+  }
+
+  if (/violat(?:ed|e)|policy|policies|content_filter/i.test(text)) {
+    return '这次图片请求可能触发了内容策略，服务端没有返回图片。请调整提示词或参考图后重试。';
+  }
+
+  return text || `${apiModeLabel} 没有返回可用图片，请稍后重试。`;
+}
 
 function safeJsonParse(value) {
   try {
@@ -490,24 +514,11 @@ function extractImageUrlFromPayload(payload) {
 
 async function throwDrawResponseError(response) {
   const errorText = await response.text().catch(() => '请求失败');
-  if (response.status === 504 || /FUNCTION_INVOCATION_TIMEOUT/i.test(errorText)) {
-    throw new Error('图片生成代理超时。绘图生成耗时较长，请稍后重试，或降低质量/换个尺寸再试。');
-  }
-  throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
+  throw new Error(normalizeDrawErrorMessage(errorText, response.status));
 }
 
 function createNoImageError(rawText, apiModeLabel = '当前模式') {
-  const text = String(rawText || '').trim();
-
-  if (/excessive\s+system\s+load|system\s+load|Progressing/i.test(text)) {
-    return new Error('绘图服务当前负载较高，图片没有生成完成。请稍后重试，或降低质量/换个尺寸再试。');
-  }
-
-  if (/violat(?:ed|e)|policy|policies|content_filter/i.test(text)) {
-    return new Error('图片请求可能触发了内容策略，服务没有返回图片。请调整提示词后重试。');
-  }
-
-  return new Error(`${apiModeLabel} 没有返回可用图片。请稍后重试，或切换到 Images API 模式。`);
+  return new Error(normalizeDrawErrorMessage(rawText, 200, apiModeLabel));
 }
 
 function getAuthorizedHeaders() {
@@ -537,6 +548,13 @@ function abortableDelay(ms, signal) {
   });
 }
 
+function resolveDrawTaskPollInterval(startedAt) {
+  const elapsedMs = Date.now() - Number(startedAt || Date.now());
+  return elapsedMs < DRAW_TASK_SLOW_POLL_WINDOW_MS
+    ? DRAW_TASK_POLL_INTERVAL_MS
+    : DRAW_TASK_POLL_INTERVAL_AFTER_30S_MS;
+}
+
 async function readJsonResponse(response) {
   const text = await response.text();
   try {
@@ -558,6 +576,7 @@ async function generateImageViaTaskApi({
   taskMetadata,
 }) {
   const apiMode = settings.drawApiMode || 'images';
+  const startedAt = Date.now();
   const startResponse = await fetch(resolveDrawTaskUrl(settings, 'start'), {
     method: 'POST',
     headers: getAuthorizedHeaders(),
@@ -576,7 +595,12 @@ async function generateImageViaTaskApi({
 
   const startData = await readJsonResponse(startResponse);
   if (!startResponse.ok) {
-    throw new Error(startData.error || `创建绘图任务失败 (${startResponse.status})`);
+    throw new Error(
+      normalizeDrawErrorMessage(
+        startData.error || `创建绘图任务失败 (${startResponse.status})`,
+        startResponse.status,
+      ),
+    );
   }
 
   const taskId = startData.taskId;
@@ -585,12 +609,12 @@ async function generateImageViaTaskApi({
   }
   onTaskStart?.(taskId);
 
-  return pollDrawTask({ settings, taskId, signal, onImage });
+  return pollDrawTask({ settings, taskId, startedAt, signal, onImage });
 }
 
-export async function pollDrawTask({ settings, taskId, signal, onImage }) {
+export async function pollDrawTask({ settings, taskId, startedAt, signal, onImage }) {
   while (true) {
-    await abortableDelay(DRAW_TASK_POLL_INTERVAL_MS, signal);
+    await abortableDelay(resolveDrawTaskPollInterval(startedAt), signal);
 
     const statusUrl = new URL(resolveDrawTaskUrl(settings, 'status'), window.location.origin);
     statusUrl.searchParams.set('id', taskId);
@@ -603,16 +627,24 @@ export async function pollDrawTask({ settings, taskId, signal, onImage }) {
     const statusData = await readJsonResponse(statusResponse);
 
     if (!statusResponse.ok) {
-      throw new Error(statusData.error || `查询绘图任务失败 (${statusResponse.status})`);
+      throw new Error(
+        normalizeDrawErrorMessage(
+          statusData.error || `查询绘图任务失败 (${statusResponse.status})`,
+          statusResponse.status,
+        ),
+      );
     }
 
     if (statusData.status === 'succeeded' && statusData.imageUrl) {
-      onImage(statusData.imageUrl);
+      onImage(statusData.imageUrl, {
+        createdAt: statusData.createdAt,
+        completedAt: statusData.completedAt,
+      });
       return;
     }
 
     if (statusData.status === 'failed') {
-      throw new Error(statusData.error || '图片生成失败，请稍后重试。');
+      throw new Error(normalizeDrawErrorMessage(statusData.error || '图片生成失败，请稍后重试。'));
     }
   }
 }

@@ -118,17 +118,29 @@ export function extractImageUrlFromPayload(payload) {
 }
 
 export function createNoImageMessage(rawText, apiModeLabel = '当前模式') {
+  return normalizeDrawErrorMessage(rawText, 200, apiModeLabel);
+}
+
+export function normalizeDrawErrorMessage(rawText, status, apiModeLabel = '当前模式') {
   const text = String(rawText || '').trim();
 
+  if (status === 413 || /FUNCTION_PAYLOAD_TOO_LARGE|Request Entity Too Large/i.test(text)) {
+    return '参考图过大，画图请求超过平台大小限制。请换一张更小的图片，或先裁剪/压缩后再试。';
+  }
+
+  if (status === 504 || /FUNCTION_INVOCATION_TIMEOUT/i.test(text)) {
+    return '图片生成代理超时。绘图生成耗时较长，请稍后重试，或降低质量/换个尺寸再试。';
+  }
+
   if (/excessive\s+system\s+load|system\s+load|Progressing/i.test(text)) {
-    return '绘图服务当前负载较高，图片没有生成完成。请稍后重试，或降低质量/换个尺寸再试。';
+    return '绘图服务当前负载较高，图片还没有成功生成。请稍后重试，或降低质量/换个尺寸再试。';
   }
 
   if (/violat(?:ed|e)|policy|policies|content_filter/i.test(text)) {
-    return '图片请求可能触发了内容策略，服务没有返回图片。请调整提示词后重试。';
+    return '这次图片请求可能触发了内容策略，服务端没有返回图片。请调整提示词或参考图后重试。';
   }
 
-  return `${apiModeLabel} 没有返回可用图片。请稍后重试。`;
+  return text || `${apiModeLabel} 没有返回可用图片，请稍后重试。`;
 }
 
 export async function runDrawRequest({ apiKey, options, signal }) {
@@ -152,10 +164,7 @@ export async function runDrawRequest({ apiKey, options, signal }) {
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '请求失败');
-    if (response.status === 504 || /FUNCTION_INVOCATION_TIMEOUT/i.test(errorText)) {
-      throw new Error('图片生成代理超时。绘图生成耗时较长，请稍后重试，或降低质量/换个尺寸再试。');
-    }
-    throw new Error(`图片生成接口返回 ${response.status}：${errorText}`);
+    throw new Error(normalizeDrawErrorMessage(errorText, response.status));
   }
 
   if (cleaned.apiMode === 'images') {

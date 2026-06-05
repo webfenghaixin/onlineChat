@@ -246,8 +246,6 @@ button:disabled {
 
 .header-button,
 .plain-icon-button {
-  width: 44px;
-  min-width: 44px;
   height: 44px;
   border-radius: 16px;
   color: var(--ink);
@@ -256,14 +254,32 @@ button:disabled {
 }
 
 .header-button {
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-button-icon {
+  width: 44px;
+  min-width: 44px;
+  padding: 0;
   font-size: 20px;
 }
 
+.header-button-text {
+  min-width: 64px;
+  padding: 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .plain-icon-button {
+  min-width: 64px;
+  width: auto;
   padding: 0 14px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .chat-title {
@@ -821,10 +837,6 @@ button:disabled {
   box-shadow: 0 10px 24px rgba(24, 50, 54, 0.08);
 }
 
-.composer-box-with-manage {
-  grid-template-columns: 44px minmax(0, 1fr) auto auto;
-}
-
 .upload-button,
 .send-button {
   min-width: 58px;
@@ -832,6 +844,12 @@ button:disabled {
   padding: 0 14px;
   border-radius: 14px;
   font-weight: 800;
+}
+
+.composer-top-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 2px;
 }
 
 .upload-button {
@@ -886,6 +904,12 @@ button:disabled {
   gap: 10px;
   flex-wrap: wrap;
   margin-top: 8px;
+}
+
+.draw-result-meta {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .draw-loading-spinner {
@@ -1613,6 +1637,7 @@ button:disabled {
   gap: 8px;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   padding: 4px 0;
 }
 

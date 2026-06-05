@@ -86,6 +86,10 @@ const defaultSettings = {
   drawApiMode: 'images',
 };
 
+const DRAW_REFERENCE_MAX_DIMENSION = 1536;
+const DRAW_REFERENCE_MAX_BYTES = 1.5 * 1024 * 1024;
+const DRAW_REFERENCE_MIN_QUALITY = 0.55;
+
 function getTextParts(content) {
   if (Array.isArray(content)) {
     return content
@@ -95,6 +99,76 @@ function getTextParts(content) {
   }
 
   return typeof content === 'string' ? content : '';
+}
+
+function readAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(new Error('参考图读取失败'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function loadImageElement(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('参考图解析失败'));
+    image.src = src;
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+        return;
+      }
+      reject(new Error('参考图压缩失败'));
+    }, type, quality);
+  });
+}
+
+async function prepareDrawReferenceImage(file) {
+  const originalDataUrl = await readAsDataUrl(file);
+  const image = await loadImageElement(originalDataUrl);
+  const sourceWidth = image.naturalWidth || image.width;
+  const sourceHeight = image.naturalHeight || image.height;
+  const maxEdge = Math.max(sourceWidth, sourceHeight);
+  const scale = maxEdge > DRAW_REFERENCE_MAX_DIMENSION
+    ? DRAW_REFERENCE_MAX_DIMENSION / maxEdge
+    : 1;
+
+  const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+  const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('参考图处理失败，请更换浏览器后重试。');
+  }
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, targetWidth, targetHeight);
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  let quality = 0.86;
+  let blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+
+  while (blob.size > DRAW_REFERENCE_MAX_BYTES && quality > DRAW_REFERENCE_MIN_QUALITY) {
+    quality = Math.max(DRAW_REFERENCE_MIN_QUALITY, quality - 0.08);
+    blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+  }
+
+  if (blob.size > DRAW_REFERENCE_MAX_BYTES) {
+    throw new Error('参考图仍然过大，请先裁剪后再上传。');
+  }
+
+  return readAsDataUrl(blob);
 }
 
 function getImageParts(content) {
@@ -234,6 +308,16 @@ function formatDuration(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function resolveDrawDurationSeconds(taskTiming, fallbackStartedAt) {
+  const createdAt = Number(taskTiming?.createdAt || fallbackStartedAt || 0);
+  const completedAt = Number(taskTiming?.completedAt || Date.now());
+  if (!createdAt || !completedAt || completedAt < createdAt) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round((completedAt - createdAt) / 1000));
 }
 
 function buildConversationTitle(messages) {
@@ -496,6 +580,8 @@ export default function App() {
   const [deleteDrawTarget, setDeleteDrawTarget] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState(new Set());
+  const [drawSelectMode, setDrawSelectMode] = useState(false);
+  const [drawSelectedMessageIds, setDrawSelectedMessageIds] = useState(new Set());
 
   const abortControllerRef = useRef(null);
   const composerRef = useRef(null);
@@ -519,6 +605,7 @@ export default function App() {
   const activeDrawConversation = drawConversations.find(
     (c) => c.id === activeDrawConversationId,
   ) || drawConversations[0] || null;
+  const activeDrawMessages = activeDrawConversation?.messages || [];
   const drawImageCount = drawConversations.reduce(
     (sum, c) => sum + c.messages.filter((m) => m.role === 'assistant' && m.imageUrl).length,
     0,
@@ -539,6 +626,11 @@ export default function App() {
     setSelectMode(false);
     setSelectedMessageIds(new Set());
   }, [activeConversationId]);
+
+  useEffect(() => {
+    setDrawSelectMode(false);
+    setDrawSelectedMessageIds(new Set());
+  }, [activeDrawConversationId]);
 
   // 实际渲染的消息：取最后 visibleMessageCount 条
   const visibleMessages = useMemo(() => {
@@ -668,6 +760,7 @@ export default function App() {
             conversationId: conversation.id,
             messageId: message.id,
             taskId: message.taskId,
+            createdAt: message.createdAt,
           });
         }
       }
@@ -682,12 +775,16 @@ export default function App() {
       pollDrawTask({
         settings,
         taskId: task.taskId,
+        startedAt: task.createdAt,
         signal: controller.signal,
-        onImage: (imageUrl) => {
+        onImage: (imageUrl, taskTiming) => {
+          const durationSeconds = resolveDrawDurationSeconds(taskTiming, task.createdAt);
           updateDrawConversation(task.conversationId, (conv) => ({
             ...conv,
             messages: conv.messages.map((message) =>
-              message.id === task.messageId ? { ...message, imageUrl, error: undefined } : message,
+              message.id === task.messageId
+                ? { ...message, imageUrl, error: undefined, durationSeconds }
+                : message,
             ),
           }));
         },
@@ -926,6 +1023,8 @@ export default function App() {
     setErrorText('');
     setDrawLimitWarning(false);
     setDrawPendingImage(null);
+    setDrawSelectMode(false);
+    setDrawSelectedMessageIds(new Set());
     // If no active draw conversation, create one
     if (!activeDrawConversationId || !drawConversations.find((c) => c.id === activeDrawConversationId)) {
       const conv = createDrawConversation();
@@ -946,6 +1045,8 @@ export default function App() {
     setDrawDrawerOpen(false);
     setDrawLimitWarning(false);
     setDrawPendingImage(null);
+    setDrawSelectMode(false);
+    setDrawSelectedMessageIds(new Set());
     setStatusText('已就绪');
   }
 
@@ -954,6 +1055,12 @@ export default function App() {
     setDrawConversations((prev) => [conv, ...prev]);
     setActiveDrawConversationId(conv.id);
     setDrawPrompt('');
+    setErrorText('');
+    setDrawLimitWarning(false);
+    setDrawPendingImage(null);
+    setDrawSelectMode(false);
+    setDrawSelectedMessageIds(new Set());
+    setDrawElapsedSeconds(0);
     setDrawDrawerOpen(false);
   }
 
@@ -971,6 +1078,9 @@ export default function App() {
     if (conversationId === activeDrawConversationId) {
       setDrawPrompt('');
     }
+    setErrorText('');
+    setDrawSelectMode(false);
+    setDrawSelectedMessageIds(new Set());
   }
 
   function updateDrawConversation(conversationId, updater) {
@@ -1100,7 +1210,9 @@ export default function App() {
             ? activeDrawConversation.title
             : prompt.slice(0, 18),
           activeDrawConversationId: targetConvId,
-          userMessage,
+          userMessage: userMessage.referenceImage
+            ? { ...userMessage, referenceImage: undefined }
+            : userMessage,
           assistantMessage,
         },
         onTaskStart: (taskId) => {
@@ -1111,11 +1223,12 @@ export default function App() {
             ),
           }));
         },
-        onImage: (imageUrl) => {
+        onImage: (imageUrl, taskTiming) => {
+          const durationSeconds = resolveDrawDurationSeconds(taskTiming, now);
           updateDrawConversation(targetConvId, (conv) => ({
             ...conv,
             messages: conv.messages.map((m) =>
-              m.id === assistantMessage.id ? { ...m, imageUrl } : m,
+              m.id === assistantMessage.id ? { ...m, imageUrl, durationSeconds, error: undefined } : m,
             ),
           }));
           // Enforce 20 image limit (auto-replace oldest)
@@ -1431,6 +1544,87 @@ export default function App() {
       messages: conversation.messages.filter((m) => !selectedMessageIds.has(m.id)),
     }));
     exitSelectMode();
+  }
+
+  function enterDrawSelectMode() {
+    setDrawSelectMode(true);
+    setDrawSelectedMessageIds(new Set());
+    setErrorText('');
+  }
+
+  function exitDrawSelectMode() {
+    setDrawSelectMode(false);
+    setDrawSelectedMessageIds(new Set());
+  }
+
+  function toggleDrawMessageSelection(messageId) {
+    setDrawSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }
+
+  function selectAllDrawUserMessages() {
+    setDrawSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      activeDrawMessages.forEach((message) => {
+        if (message.role === 'user') {
+          next.add(message.id);
+        }
+      });
+      return next;
+    });
+  }
+
+  function selectAllDrawAssistantMessages() {
+    setDrawSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      activeDrawMessages.forEach((message) => {
+        if (message.role === 'assistant') {
+          next.add(message.id);
+        }
+      });
+      return next;
+    });
+  }
+
+  function deleteSelectedDrawMessages() {
+    if (!activeDrawConversation || drawSelectedMessageIds.size === 0) return;
+
+    updateDrawConversation(activeDrawConversation.id, (conversation) => {
+      const removableIds = new Set(drawSelectedMessageIds);
+      conversation.messages.forEach((message, index) => {
+        if (!drawSelectedMessageIds.has(message.id)) return;
+
+        if (message.role === 'user') {
+          const nextMessage = conversation.messages[index + 1];
+          if (nextMessage?.role === 'assistant') {
+            removableIds.add(nextMessage.id);
+          }
+        }
+
+        if (message.role === 'assistant') {
+          const previousMessage = conversation.messages[index - 1];
+          if (previousMessage?.role === 'user') {
+            removableIds.add(previousMessage.id);
+          }
+        }
+      });
+
+      const remainingMessages = conversation.messages.filter((message) => !removableIds.has(message.id));
+      return {
+        ...conversation,
+        title: remainingMessages.length ? conversation.title : '新的画图',
+        messages: remainingMessages,
+      };
+    });
+
+    exitDrawSelectMode();
   }
 
   async function handleAuthSubmit(event) {
@@ -1868,19 +2062,19 @@ export default function App() {
         <header className={classNames('chat-header', selectMode ? 'chat-header-select' : 'chat-header-3col')}>
           {selectMode ? (
             <>
-              <button className="header-button" type="button" onClick={exitSelectMode}>
+              <button className="header-button header-button-text" type="button" onClick={exitSelectMode}>
                 取消
               </button>
               <div className="chat-title">
                 <h1>已选 {selectedMessageIds.size} 条</h1>
               </div>
-              <button className="header-button" type="button" onClick={deleteSelectedMessages} disabled={selectedMessageIds.size === 0} aria-label="删除">
+              <button className="header-button header-button-icon" type="button" onClick={deleteSelectedMessages} disabled={selectedMessageIds.size === 0} aria-label="删除">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
               </button>
             </>
           ) : (
             <>
-              <button className="header-button" type="button" onClick={() => openDrawer('history')}>
+              <button className="header-button header-button-icon" type="button" onClick={() => openDrawer('history')}>
                 <span aria-hidden="true">☰</span>
               </button>
 
@@ -1893,7 +2087,7 @@ export default function App() {
                 </p>
               </div>
 
-              <button className="header-button draw-header-button" type="button" onClick={openDrawMode} aria-label="画图">
+              <button className="header-button header-button-icon draw-header-button" type="button" onClick={openDrawMode} aria-label="画图">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
               </button>
             </>
@@ -1984,7 +2178,20 @@ export default function App() {
                 </div>
               )}
 
-              <div className={classNames('composer-box', activeMessages.length > 0 && !isSending && 'composer-box-with-manage')}>
+              {activeMessages.length > 0 && !isSending && (
+                <div className="composer-top-actions">
+                  <button
+                    className="manage-button"
+                    type="button"
+                    onClick={enterSelectMode}
+                    aria-label="管理消息"
+                  >
+                    管理
+                  </button>
+                </div>
+              )}
+
+              <div className="composer-box">
                 <button className="upload-button" type="button" onClick={handleUploadClick} aria-label="上传图片">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 </button>
@@ -2004,26 +2211,14 @@ export default function App() {
                     停止
                   </button>
                 ) : (
-                  <>
-                    {activeMessages.length > 0 && (
-                      <button
-                        className="manage-button"
-                        type="button"
-                        onClick={enterSelectMode}
-                        aria-label="管理消息"
-                      >
-                        管理
-                      </button>
-                    )}
-                    <button
-                      className="send-button"
-                      type="button"
-                      disabled={!canSend}
-                      onClick={() => sendMessage()}
-                    >
-                      发送
-                    </button>
-                  </>
+                  <button
+                    className="send-button"
+                    type="button"
+                    disabled={!canSend}
+                    onClick={() => sendMessage()}
+                  >
+                    发送
+                  </button>
                 )}
               </div>
             </>
@@ -2078,6 +2273,9 @@ export default function App() {
                         type="button"
                         onClick={() => {
                           setActiveDrawConversationId(conv.id);
+                          setErrorText('');
+                          setDrawSelectMode(false);
+                          setDrawSelectedMessageIds(new Set());
                           setDrawDrawerOpen(false);
                         }}
                       >
@@ -2111,23 +2309,45 @@ export default function App() {
 
           {/* Draw main page */}
           <main className="phone-shell">
-            <header className="chat-header chat-header-3col">
-              <button className="header-button" type="button" onClick={() => setDrawDrawerOpen(true)}>
-                <span aria-hidden="true">☰</span>
-              </button>
+            <header className={classNames('chat-header', drawSelectMode ? 'chat-header-select' : 'chat-header-3col')}>
+              {drawSelectMode ? (
+                <>
+                  <button className="header-button header-button-text" type="button" onClick={exitDrawSelectMode}>
+                    取消
+                  </button>
+                  <div className="chat-title">
+                    <h1>已选 {drawSelectedMessageIds.size} 条</h1>
+                  </div>
+                  <button
+                    className="header-button header-button-icon"
+                    type="button"
+                    onClick={deleteSelectedDrawMessages}
+                    disabled={drawSelectedMessageIds.size === 0}
+                    aria-label="删除"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="header-button header-button-icon" type="button" onClick={() => setDrawDrawerOpen(true)}>
+                    <span aria-hidden="true">☰</span>
+                  </button>
 
-              <div className="chat-title">
-                <img className="header-logo" src="/logo-2.png" alt="" />
-                <h1>{activeDrawConversation?.title || 'AI 画图'}</h1>
-                <p>
-                  <span className={classNames('status-dot', isGenerating && 'status-dot-live')} />
-                  {isGenerating ? `生成中 ${formatDuration(drawElapsedSeconds)}` : `已存 ${drawImageCount}/20 张`}
-                </p>
-              </div>
+                  <div className="chat-title">
+                    <img className="header-logo" src="/logo-2.png" alt="" />
+                    <h1>{activeDrawConversation?.title || 'AI 画图'}</h1>
+                    <p>
+                      <span className={classNames('status-dot', isGenerating && 'status-dot-live')} />
+                      {isGenerating ? `生成中 ${formatDuration(drawElapsedSeconds)}` : `已存 ${drawImageCount}/20 张`}
+                    </p>
+                  </div>
 
-              <button className="header-button" type="button" onClick={closeDrawMode} aria-label="返回聊天">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              </button>
+                  <button className="header-button header-button-icon" type="button" onClick={closeDrawMode} aria-label="返回聊天">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  </button>
+                </>
+              )}
             </header>
 
             <div className="message-list-wrapper">
@@ -2150,17 +2370,37 @@ export default function App() {
                 {activeDrawConversation?.messages.map((msg) => {
                   if (msg.role === 'user') {
                     return (
-                      <article key={msg.id} className="message-row message-user">
-                        <div className="message-meta">
-                          <span>我</span>
-                          <time>{formatTime(msg.createdAt)}</time>
-                        </div>
-                        <div className="message-bubble">
-                          {msg.referenceImage && (
-                            <img className="draw-ref-image" src={msg.referenceImage} alt="参考图" />
-                          )}
-                          {msg.content}
-                          <span className="draw-msg-config">{DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
+                      <article
+                        key={msg.id}
+                        className={classNames(
+                          'message-row',
+                          'message-user',
+                          drawSelectMode && 'message-row-selectable',
+                          drawSelectMode && drawSelectedMessageIds.has(msg.id) && 'message-row-selected',
+                        )}
+                        onClick={drawSelectMode ? () => toggleDrawMessageSelection(msg.id) : undefined}
+                      >
+                        {drawSelectMode && (
+                          <div className={classNames('message-checkbox', drawSelectedMessageIds.has(msg.id) && 'message-checkbox-checked')}>
+                            {drawSelectedMessageIds.has(msg.id) ? (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8 6.5 11 12.5 5" /></svg>
+                            ) : (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="3" /></svg>
+                            )}
+                          </div>
+                        )}
+                        <div className="message-content-col">
+                          <div className="message-meta">
+                            <span>我</span>
+                            <time>{formatTime(msg.createdAt)}</time>
+                          </div>
+                          <div className="message-bubble">
+                            {msg.referenceImage && (
+                              <img className="draw-ref-image" src={msg.referenceImage} alt="参考图" />
+                            )}
+                            {msg.content}
+                            <span className="draw-msg-config">{DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
+                          </div>
                         </div>
                       </article>
                     );
@@ -2169,21 +2409,46 @@ export default function App() {
                   // assistant message
                   if (msg.imageUrl) {
                     return (
-                      <article key={msg.id} className="message-row message-assistant">
-                        <div className="message-meta">
-                          <img className="message-avatar" src="/logo-2.png" alt="" />
-                          <span>AI</span>
-                          <time>{formatTime(msg.createdAt)}</time>
-                        </div>
-                        <div className="message-bubble">
-                          <img className="draw-result-image" src={msg.imageUrl} alt={msg.prompt} />
-                          <div className="draw-result-actions">
-                            <button className="tool-button" type="button" onClick={() => downloadImage(msg.imageUrl, msg.prompt)}>
-                              保存到相册
-                            </button>
-                            <button className="tool-button tool-button-retry" type="button" onClick={() => requestDeleteDrawMessage(activeDrawConversation.id, msg.id)}>
-                              删除
-                            </button>
+                      <article
+                        key={msg.id}
+                        className={classNames(
+                          'message-row',
+                          'message-assistant',
+                          drawSelectMode && 'message-row-selectable',
+                          drawSelectMode && drawSelectedMessageIds.has(msg.id) && 'message-row-selected',
+                        )}
+                        onClick={drawSelectMode ? () => toggleDrawMessageSelection(msg.id) : undefined}
+                      >
+                        {drawSelectMode && (
+                          <div className={classNames('message-checkbox', drawSelectedMessageIds.has(msg.id) && 'message-checkbox-checked')}>
+                            {drawSelectedMessageIds.has(msg.id) ? (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8 6.5 11 12.5 5" /></svg>
+                            ) : (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="3" /></svg>
+                            )}
+                          </div>
+                        )}
+                        <div className="message-content-col">
+                          <div className="message-meta">
+                            <img className="message-avatar" src="/logo-2.png" alt="" />
+                            <span>AI</span>
+                            <time>{formatTime(msg.createdAt)}</time>
+                          </div>
+                          <div className="message-bubble">
+                            <img className="draw-result-image" src={msg.imageUrl} alt={msg.prompt} />
+                            {typeof msg.durationSeconds === 'number' && (
+                              <div className="draw-result-meta">生成用时 {formatDuration(msg.durationSeconds)}</div>
+                            )}
+                            {!drawSelectMode && (
+                              <div className="draw-result-actions">
+                                <button className="tool-button" type="button" onClick={() => downloadImage(msg.imageUrl, msg.prompt)}>
+                                  保存到相册
+                                </button>
+                                <button className="tool-button tool-button-retry" type="button" onClick={() => requestDeleteDrawMessage(activeDrawConversation.id, msg.id)}>
+                                  删除
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </article>
@@ -2192,13 +2457,33 @@ export default function App() {
 
                   if (msg.error) {
                     return (
-                      <article key={msg.id} className="message-row message-assistant">
-                        <div className="message-meta">
-                          <img className="message-avatar" src="/logo-2.png" alt="" />
-                          <span>AI</span>
-                        </div>
-                        <div className="message-bubble">
-                          <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(`出错了：${msg.error}`) }} />
+                      <article
+                        key={msg.id}
+                        className={classNames(
+                          'message-row',
+                          'message-assistant',
+                          drawSelectMode && 'message-row-selectable',
+                          drawSelectMode && drawSelectedMessageIds.has(msg.id) && 'message-row-selected',
+                        )}
+                        onClick={drawSelectMode ? () => toggleDrawMessageSelection(msg.id) : undefined}
+                      >
+                        {drawSelectMode && (
+                          <div className={classNames('message-checkbox', drawSelectedMessageIds.has(msg.id) && 'message-checkbox-checked')}>
+                            {drawSelectedMessageIds.has(msg.id) ? (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8 6.5 11 12.5 5" /></svg>
+                            ) : (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="3" /></svg>
+                            )}
+                          </div>
+                        )}
+                        <div className="message-content-col">
+                          <div className="message-meta">
+                            <img className="message-avatar" src="/logo-2.png" alt="" />
+                            <span>AI</span>
+                          </div>
+                          <div className="message-bubble">
+                            <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(`出错了：${msg.error}`) }} />
+                          </div>
                         </div>
                       </article>
                     );
@@ -2207,15 +2492,35 @@ export default function App() {
                   // Still generating (no imageUrl yet)
                   if (isGenerating) {
                     return (
-                      <article key={msg.id} className="message-row message-assistant">
-                        <div className="message-meta">
-                          <img className="message-avatar" src="/logo-2.png" alt="" />
-                          <span>AI</span>
-                        </div>
-                        <div className="message-bubble">
-                          <div className="draw-loading-inline">
-                            <div className="draw-loading-spinner" />
-                            <span>正在生成图片，已等待 {formatDuration(drawElapsedSeconds)}</span>
+                      <article
+                        key={msg.id}
+                        className={classNames(
+                          'message-row',
+                          'message-assistant',
+                          drawSelectMode && 'message-row-selectable',
+                          drawSelectMode && drawSelectedMessageIds.has(msg.id) && 'message-row-selected',
+                        )}
+                        onClick={drawSelectMode ? () => toggleDrawMessageSelection(msg.id) : undefined}
+                      >
+                        {drawSelectMode && (
+                          <div className={classNames('message-checkbox', drawSelectedMessageIds.has(msg.id) && 'message-checkbox-checked')}>
+                            {drawSelectedMessageIds.has(msg.id) ? (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8 6.5 11 12.5 5" /></svg>
+                            ) : (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="3" /></svg>
+                            )}
+                          </div>
+                        )}
+                        <div className="message-content-col">
+                          <div className="message-meta">
+                            <img className="message-avatar" src="/logo-2.png" alt="" />
+                            <span>AI</span>
+                          </div>
+                          <div className="message-bubble">
+                            <div className="draw-loading-inline">
+                              <div className="draw-loading-spinner" />
+                              <span>正在生成图片，已等待 {formatDuration(drawElapsedSeconds)}</span>
+                            </div>
                           </div>
                         </div>
                       </article>
@@ -2228,101 +2533,134 @@ export default function App() {
             </div>
 
             <footer className="composer-panel">
-              {isGenerating && (
-                <div className="draw-waiting-bar">
-                  <span className="draw-waiting-dot" />
-                  <span>正在生成，已等待 {formatDuration(drawElapsedSeconds)}</span>
-                </div>
-              )}
-              {drawPendingImage && (
-                <div className="pending-image-card">
-                  <img className="pending-image-preview" src={drawPendingImage.url} alt="参考图" />
-                  <div className="pending-image-info">
-                    <div className="pending-image-title">参考图（图生图）</div>
-                    <div className="pending-image-name">{drawPendingImage.name}</div>
-                  </div>
-                  <button className="pending-image-remove" type="button" onClick={() => setDrawPendingImage(null)}>
-                    移除
+              {drawSelectMode ? (
+                <div className="select-action-bar">
+                  <button className="select-action-btn select-action-btn-user" type="button" onClick={selectAllDrawUserMessages}>
+                    全选用户
                   </button>
-                </div>
-              )}
-              <div className="draw-config">
-                <label className="draw-config-item">
-                  <span>模式</span>
-                  <select
-                    className="draw-config-select"
-                    value={settings.drawApiMode || 'images'}
-                    onChange={(e) => setSettings((s) => ({ ...s, drawApiMode: e.target.value }))}
-                  >
-                    {DRAW_API_MODE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="draw-config-item">
-                  <span>尺寸</span>
-                  <select
-                    className="draw-config-select"
-                    value={settings.drawSize || '1024x1024'}
-                    onChange={(e) => setSettings((s) => ({ ...s, drawSize: e.target.value }))}
-                  >
-                    {DRAW_SIZE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="draw-config-item">
-                  <span>质量</span>
-                  <select
-                    className="draw-config-select"
-                    value={settings.drawQuality || 'medium'}
-                    onChange={(e) => setSettings((s) => ({ ...s, drawQuality: e.target.value }))}
-                  >
-                    {DRAW_QUALITY_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="draw-input-row">
-                <button className="upload-button" type="button" onClick={() => drawFileInputRef.current?.click()} aria-label="上传参考图">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                </button>
-                <textarea
-                  className="draw-input"
-                  rows={1}
-                  value={drawPrompt}
-                  onChange={(e) => setDrawPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      handleDraw();
-                    }
-                  }}
-                  placeholder="描述你想要的图片..."
-                  disabled={isGenerating}
-                />
-                {isGenerating ? (
-                  <button className="send-button stop-button" type="button" onClick={closeDrawMode}>
-                    停止
+                  <button className="select-action-btn select-action-btn-ai" type="button" onClick={selectAllDrawAssistantMessages}>
+                    全选AI
                   </button>
-                ) : (
                   <button
-                    className="send-button draw-send-button"
+                    className="select-action-btn select-action-btn-delete"
                     type="button"
-                    disabled={!drawPrompt.trim() || isGenerating || authState !== 'authenticated'}
-                    onClick={handleDraw}
+                    onClick={deleteSelectedDrawMessages}
+                    disabled={drawSelectedMessageIds.size === 0}
                   >
-                    生成
+                    删除({drawSelectedMessageIds.size})
                   </button>
-                )}
-              </div>
+                </div>
+              ) : (
+                <>
+                  {isGenerating && (
+                    <div className="draw-waiting-bar">
+                      <span className="draw-waiting-dot" />
+                      <span>正在生成，已等待 {formatDuration(drawElapsedSeconds)}</span>
+                    </div>
+                  )}
+                  {drawPendingImage && (
+                    <div className="pending-image-card">
+                      <img className="pending-image-preview" src={drawPendingImage.url} alt="参考图" />
+                      <div className="pending-image-info">
+                        <div className="pending-image-title">参考图（图生图）</div>
+                        <div className="pending-image-name">{drawPendingImage.name}</div>
+                      </div>
+                      <button className="pending-image-remove" type="button" onClick={() => setDrawPendingImage(null)}>
+                        移除
+                      </button>
+                    </div>
+                  )}
+                  {activeDrawMessages.length > 0 && !isGenerating && (
+                    <div className="composer-top-actions">
+                      <button
+                        className="manage-button"
+                        type="button"
+                        onClick={enterDrawSelectMode}
+                        aria-label="管理画图记录"
+                      >
+                        管理
+                      </button>
+                    </div>
+                  )}
+                  <div className="draw-config">
+                    <label className="draw-config-item">
+                      <span>模式</span>
+                      <select
+                        className="draw-config-select"
+                        value={settings.drawApiMode || 'images'}
+                        onChange={(e) => setSettings((s) => ({ ...s, drawApiMode: e.target.value }))}
+                      >
+                        {DRAW_API_MODE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="draw-config-item">
+                      <span>尺寸</span>
+                      <select
+                        className="draw-config-select"
+                        value={settings.drawSize || '1024x1024'}
+                        onChange={(e) => setSettings((s) => ({ ...s, drawSize: e.target.value }))}
+                      >
+                        {DRAW_SIZE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="draw-config-item">
+                      <span>质量</span>
+                      <select
+                        className="draw-config-select"
+                        value={settings.drawQuality || 'medium'}
+                        onChange={(e) => setSettings((s) => ({ ...s, drawQuality: e.target.value }))}
+                      >
+                        {DRAW_QUALITY_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="draw-input-row">
+                    <button className="upload-button" type="button" onClick={() => drawFileInputRef.current?.click()} aria-label="上传参考图">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                    </button>
+                    <textarea
+                      className="draw-input"
+                      rows={1}
+                      value={drawPrompt}
+                      onChange={(e) => setDrawPrompt(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleDraw();
+                        }
+                      }}
+                      placeholder="描述你想要的图片..."
+                      disabled={isGenerating}
+                    />
+                    {isGenerating ? (
+                      <button className="send-button stop-button" type="button" onClick={closeDrawMode}>
+                        停止
+                      </button>
+                    ) : (
+                      <button
+                        className="send-button draw-send-button"
+                        type="button"
+                        disabled={!drawPrompt.trim() || isGenerating || authState !== 'authenticated'}
+                        onClick={handleDraw}
+                      >
+                        生成
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
               <input
                 ref={drawFileInputRef}
                 className="hidden-input"
                 type="file"
                 accept="image/*"
-                onChange={(e) => {
+                onChange={async (e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
                   if (!file.type.startsWith('image/')) {
@@ -2330,16 +2668,17 @@ export default function App() {
                     e.target.value = '';
                     return;
                   }
-                  const reader = new FileReader();
-                  reader.onload = () => {
+
+                  try {
+                    const optimizedImageUrl = await prepareDrawReferenceImage(file);
                     setDrawPendingImage({
                       name: file.name,
-                      url: typeof reader.result === 'string' ? reader.result : '',
+                      url: optimizedImageUrl,
                     });
                     setErrorText('');
-                  };
-                  reader.onerror = () => setErrorText('图片读取失败');
-                  reader.readAsDataURL(file);
+                  } catch (error) {
+                    setErrorText(error.message || '参考图处理失败');
+                  }
                   e.target.value = '';
                 }}
               />

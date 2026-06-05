@@ -32,6 +32,7 @@ const MODEL_OPTIONS = [
 const DRAW_SIZE_OPTIONS = [
   { value: '1024x1024', label: '1:1 方图' },
   { value: '1024x1536', label: '2:3 竖图' },
+  { value: '1024x1792', label: '9:16 全屏' },
   { value: '1536x1024', label: '3:2 横图' },
 ];
 
@@ -589,6 +590,7 @@ export default function App() {
   const [drawPendingImage, setDrawPendingImage] = useState(null);
   const [drawElapsedSeconds, setDrawElapsedSeconds] = useState(0);
   const [deleteDrawTarget, setDeleteDrawTarget] = useState(null);
+  const [deleteDrawConversationTarget, setDeleteDrawConversationTarget] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState(new Set());
   const [drawSelectMode, setDrawSelectMode] = useState(false);
@@ -1732,11 +1734,20 @@ export default function App() {
 
   if (authState === 'loading') {
     return (
-      <div className="gate-shell">
-        <section className="gate-card">
-          {/* <img className="gate-logo" src="/logo-2.png" alt="" /> */}
-          {/* <h1>lightChat</h1> */}
-          <p>loading...</p>
+      <div className="gate-shell gate-shell-loading">
+        <section className="gate-card-loading">
+          <div className="gate-loading-scene" aria-hidden="true">
+            <img className="gate-loading-logo" src="/logo-2.png" alt="" />
+          </div>
+          <div className="gate-loading-copy">
+            <p className="loading-text" aria-label="正在同步你的工作台">
+              {'正在同步你的工作台'.split('').map((char, index) => (
+                <span key={`${char}-${index}`} style={{ '--delay': `${index * 0.08}s` }}>
+                  {char}
+                </span>
+              ))}
+            </p>
+          </div>
         </section>
       </div>
     );
@@ -2326,7 +2337,7 @@ export default function App() {
                         className="history-delete"
                         type="button"
                         aria-label="删除画图记录"
-                        onClick={() => removeDrawConversation(conv.id)}
+                        onClick={() => setDeleteDrawConversationTarget(conv.id)}
                       >
                         删除
                       </button>
@@ -2556,8 +2567,12 @@ export default function App() {
                           </div>
                           <div className="message-bubble">
                             <div className="draw-loading-inline">
-                              <div className="draw-loading-spinner" />
-                              <span>正在生成图片，已等待 {formatDuration(drawElapsedSeconds)}</span>
+                              <div className="draw-loading-stage" aria-hidden="true">
+                                <img className="draw-loading-logo" src="/logo-2.png" alt="" />
+                              </div>
+                              <div className="draw-loading-copy">
+                                <span className="draw-loading-subtitle">正在生成图片，已等待 {formatDuration(drawElapsedSeconds)}</span>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -2608,18 +2623,6 @@ export default function App() {
                       </button>
                     </div>
                   )}
-                  {activeDrawMessages.length > 0 && !isGenerating && (
-                    <div className="composer-top-actions">
-                      <button
-                        className="manage-button"
-                        type="button"
-                        onClick={enterDrawSelectMode}
-                        aria-label="管理画图记录"
-                      >
-                        管理
-                      </button>
-                    </div>
-                  )}
                   <div className="draw-config">
                     <label className="draw-config-item">
                       <span>模式</span>
@@ -2657,6 +2660,16 @@ export default function App() {
                         ))}
                       </select>
                     </label>
+                    {activeDrawMessages.length > 0 && !isGenerating && (
+                      <button
+                        className="manage-button draw-config-manage"
+                        type="button"
+                        onClick={enterDrawSelectMode}
+                        aria-label="管理画图记录"
+                      >
+                        管理
+                      </button>
+                    )}
                   </div>
                   <div className="draw-input-row">
                     <button className="upload-button" type="button" onClick={() => drawFileInputRef.current?.click()} aria-label="上传参考图">
@@ -2739,6 +2752,36 @@ export default function App() {
                     取消
                   </button>
                   <button className="confirm-button confirm-button-danger" type="button" onClick={confirmDeleteDrawMessage}>
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {deleteDrawConversationTarget && (
+            <div className="confirm-layer" role="dialog" aria-modal="true" aria-labelledby="delete-draw-conversation-title">
+              <button
+                className="confirm-backdrop"
+                type="button"
+                aria-label="取消删除"
+                onClick={() => setDeleteDrawConversationTarget(null)}
+              />
+              <div className="confirm-dialog">
+                <h2 id="delete-draw-conversation-title">删除这条画图记录？</h2>
+                <p>这条记录里的提示词和图片都会被删除，此操作不可撤销。</p>
+                <div className="confirm-actions">
+                  <button className="confirm-button confirm-button-secondary" type="button" onClick={() => setDeleteDrawConversationTarget(null)}>
+                    取消
+                  </button>
+                  <button
+                    className="confirm-button confirm-button-danger"
+                    type="button"
+                    onClick={() => {
+                      removeDrawConversation(deleteDrawConversationTarget);
+                      setDeleteDrawConversationTarget(null);
+                    }}
+                  >
                     删除
                   </button>
                 </div>

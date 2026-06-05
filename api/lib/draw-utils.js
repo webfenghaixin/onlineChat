@@ -136,11 +136,20 @@ export function normalizeDrawErrorMessage(rawText, status, apiModeLabel = '当�
     return '绘图服务当前负载较高，图片还没有成功生成。请稍后重试，或降低质量/换个尺寸再试。';
   }
 
-  if (/violat(?:ed|e)|policy|policies|content_filter/i.test(text)) {
+  if (/content_filter|content.policy|safety.policy|image.policy|violat(?:ed|es?).+(?:policy|content|safety)|policy.+violat/i.test(text)) {
     return '这次图片请求可能触发了内容策略，服务端没有返回图片。请调整提示词或参考图后重试。';
   }
 
-  return text || `${apiModeLabel} 没有返回可用图片，请稍后重试。`;
+  if (/violat(?:ed|e)|content_filter/i.test(text)) {
+    return '这次图片请求可能触发了内容策略，服务端没有返回图片。请调整提示词或参考图后重试。';
+  }
+
+  if (text) {
+    const snippet = text.length > 200 ? text.slice(0, 200) + '…' : text;
+    return `${apiModeLabel} 没有返回可用图片。服务端响应：${snippet}`;
+  }
+
+  return `${apiModeLabel} 没有返回可用图片，请稍后重试。`;
 }
 
 export async function runDrawRequest({ apiKey, options, signal }) {

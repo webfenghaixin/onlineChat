@@ -196,7 +196,22 @@ function loadState() {
 }
 
 function saveState(state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    // 过滤掉画图消息中的 referenceImage（base64 数据过大，且仅临时使用）
+    const cleanedDrawConversations = state.drawConversations.map((conv) => ({
+      ...conv,
+      messages: conv.messages.map((msg) => {
+        if (msg.referenceImage) {
+          const { referenceImage, ...rest } = msg;
+          return rest;
+        }
+        return msg;
+      }),
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, drawConversations: cleanedDrawConversations }));
+  } catch {
+    // localStorage 可能已满，忽略写入错误
+  }
 }
 
 function formatTime(timestamp) {
@@ -356,6 +371,9 @@ const MessageRow = memo(function MessageRow({
   copiedMessageId,
   onCopy,
   onRetry,
+  selectMode,
+  selected,
+  onToggleSelect,
 }) {
   const images = getImageParts(message.content);
   const text = getTextParts(message.content);
@@ -366,63 +384,79 @@ const MessageRow = memo(function MessageRow({
       className={classNames(
         'message-row',
         message.role === 'user' ? 'message-user' : 'message-assistant',
+        selectMode && 'message-row-selectable',
+        selectMode && selected && 'message-row-selected',
       )}
+      onClick={selectMode ? () => onToggleSelect(message.id) : undefined}
     >
-      <div className="message-meta">
-        {isAssistant && <img className="message-avatar" src="/logo-2.png" alt="" />}
-        <span>{message.role === 'user' ? '我' : 'AI'}</span>
-        <time>{formatTime(message.createdAt || Date.now())}</time>
-      </div>
+      {selectMode && (
+        <div className={classNames('message-checkbox', selected && 'message-checkbox-checked')}>
+          {selected ? (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8 6.5 11 12.5 5" /></svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="3" /></svg>
+          )}
+        </div>
+      )}
+      <div className="message-content-col">
+        <div className="message-meta">
+          {isAssistant && <img className="message-avatar" src="/logo-2.png" alt="" />}
+          <span>{message.role === 'user' ? '我' : 'AI'}</span>
+          <time>{formatTime(message.createdAt || Date.now())}</time>
+        </div>
 
-      <div className="message-bubble">
-        {images.length > 0 && (
-          <div className="message-images">
-            {images.map((image) => (
-              <img
-                key={image.image_url.url}
-                className="message-image"
-                src={image.image_url.url}
-                alt="上传图片"
-              />
-            ))}
+        <div className="message-bubble">
+          {images.length > 0 && (
+            <div className="message-images">
+              {images.map((image) => (
+                <img
+                  key={image.image_url.url}
+                  className="message-image"
+                  src={image.image_url.url}
+                  alt="上传图片"
+                />
+              ))}
+            </div>
+          )}
+
+          {isAssistant ? (
+            <div
+              className="markdown-body"
+              dangerouslySetInnerHTML={{
+                __html: renderMarkdown(text || (isLatestAssistant ? '正在思考...' : '')),
+              }}
+            />
+          ) : (
+            text
+          )}
+          {isLatestAssistant && <span className="typing-cursor" />}
+        </div>
+
+        {!selectMode && (
+          <div className={classNames('message-tools', message.role === 'user' && 'message-tools-user')}>
+            {isAssistant && text.startsWith('出错了') && !isSending && (
+              <button
+                type="button"
+                className="tool-button tool-button-retry"
+                onClick={() => onRetry(message)}
+              >
+                重新提问
+              </button>
+            )}
+            <button
+              type="button"
+              className={classNames('tool-button tool-button-icon', copiedMessageId === message.id && 'tool-button-copied', message.role === 'user' && 'tool-button-user')}
+              onClick={() => onCopy(message)}
+              aria-label="复制"
+            >
+              {copiedMessageId === message.id ? (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" /></svg>
+              )}
+            </button>
           </div>
         )}
-
-        {isAssistant ? (
-          <div
-            className="markdown-body"
-            dangerouslySetInnerHTML={{
-              __html: renderMarkdown(text || (isLatestAssistant ? '正在思考...' : '')),
-            }}
-          />
-        ) : (
-          text
-        )}
-        {isLatestAssistant && <span className="typing-cursor" />}
-      </div>
-
-      <div className={classNames('message-tools', message.role === 'user' && 'message-tools-user')}>
-        {isAssistant && text.startsWith('出错了') && !isSending && (
-          <button
-            type="button"
-            className="tool-button tool-button-retry"
-            onClick={() => onRetry(message)}
-          >
-            重新提问
-          </button>
-        )}
-        <button
-          type="button"
-          className={classNames('tool-button tool-button-icon', copiedMessageId === message.id && 'tool-button-copied', message.role === 'user' && 'tool-button-user')}
-          onClick={() => onCopy(message)}
-          aria-label="复制"
-        >
-          {copiedMessageId === message.id ? (
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
-          ) : (
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" /></svg>
-          )}
-        </button>
       </div>
     </article>
   );
@@ -460,6 +494,8 @@ export default function App() {
   const [drawPendingImage, setDrawPendingImage] = useState(null);
   const [drawElapsedSeconds, setDrawElapsedSeconds] = useState(0);
   const [deleteDrawTarget, setDeleteDrawTarget] = useState(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState(new Set());
 
   const abortControllerRef = useRef(null);
   const composerRef = useRef(null);
@@ -500,6 +536,8 @@ export default function App() {
   // 切换对话时重置可见消息数
   useEffect(() => {
     setVisibleMessageCount(50);
+    setSelectMode(false);
+    setSelectedMessageIds(new Set());
   }, [activeConversationId]);
 
   // 实际渲染的消息：取最后 visibleMessageCount 条
@@ -678,18 +716,24 @@ export default function App() {
 
   // 滚动到底部（用户点击按钮时调用）
   const scrollToBottom = useCallback(() => {
-    programmaticScrollRef.current = true;
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    setShowScrollToBottom(false);
-    setTimeout(() => { programmaticScrollRef.current = false; }, 300);
+    const el = messageListRef.current;
+    if (el) {
+      programmaticScrollRef.current = true;
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      setShowScrollToBottom(false);
+      setTimeout(() => { programmaticScrollRef.current = false; }, 500);
+    }
   }, []);
 
   // 程序主动滚到底部（登录完成、切换对话等）
   const forceScrollToBottom = useCallback(() => {
-    programmaticScrollRef.current = true;
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    setShowScrollToBottom(false);
-    setTimeout(() => { programmaticScrollRef.current = false; }, 300);
+    const el = messageListRef.current;
+    if (el) {
+      programmaticScrollRef.current = true;
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      setShowScrollToBottom(false);
+      setTimeout(() => { programmaticScrollRef.current = false; }, 500);
+    }
   }, []);
 
   // 监听用户滚动：只在非程序滚动时更新按钮状态
@@ -1338,6 +1382,57 @@ export default function App() {
     composerRef.current?.focus();
   }
 
+  function enterSelectMode() {
+    setSelectMode(true);
+    setSelectedMessageIds(new Set());
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedMessageIds(new Set());
+  }
+
+  function toggleMessageSelection(messageId) {
+    setSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }
+
+  function selectAllUserMessages() {
+    setSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      activeMessages.forEach((m) => {
+        if (m.role === 'user') next.add(m.id);
+      });
+      return next;
+    });
+  }
+
+  function selectAllAssistantMessages() {
+    setSelectedMessageIds((prev) => {
+      const next = new Set(prev);
+      activeMessages.forEach((m) => {
+        if (m.role === 'assistant') next.add(m.id);
+      });
+      return next;
+    });
+  }
+
+  function deleteSelectedMessages() {
+    if (selectedMessageIds.size === 0 || !activeConversation) return;
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      messages: conversation.messages.filter((m) => !selectedMessageIds.has(m.id)),
+    }));
+    exitSelectMode();
+  }
+
   async function handleAuthSubmit(event) {
     event.preventDefault();
     setAuthError('');
@@ -1770,23 +1865,39 @@ export default function App() {
       )}
 
       <main className="phone-shell">
-        <header className="chat-header chat-header-3col">
-          <button className="header-button" type="button" onClick={() => openDrawer('history')}>
-            <span aria-hidden="true">☰</span>
-          </button>
+        <header className={classNames('chat-header', selectMode ? 'chat-header-select' : 'chat-header-3col')}>
+          {selectMode ? (
+            <>
+              <button className="header-button" type="button" onClick={exitSelectMode}>
+                取消
+              </button>
+              <div className="chat-title">
+                <h1>已选 {selectedMessageIds.size} 条</h1>
+              </div>
+              <button className="header-button" type="button" onClick={deleteSelectedMessages} disabled={selectedMessageIds.size === 0} aria-label="删除">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="header-button" type="button" onClick={() => openDrawer('history')}>
+                <span aria-hidden="true">☰</span>
+              </button>
 
-          <div className="chat-title">
-            <img className="header-logo" src="/logo-2.png" alt="" />
-            <h1>{activeConversation?.title || 'lightChat'}</h1>
-            <p>
-              <span className={classNames('status-dot', isSending && 'status-dot-live')} />
-              {statusText}
-            </p>
-          </div>
+              <div className="chat-title">
+                <img className="header-logo" src="/logo-2.png" alt="" />
+                <h1>{activeConversation?.title || 'lightChat'}</h1>
+                <p>
+                  <span className={classNames('status-dot', isSending && 'status-dot-live')} />
+                  {statusText}
+                </p>
+              </div>
 
-          <button className="header-button draw-header-button" type="button" onClick={openDrawMode} aria-label="画图">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-          </button>
+              <button className="header-button draw-header-button" type="button" onClick={openDrawMode} aria-label="画图">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+              </button>
+            </>
+          )}
         </header>
 
         <div className="message-list-wrapper">
@@ -1815,6 +1926,9 @@ export default function App() {
                 copiedMessageId={copiedMessageId}
                 onCopy={copyMessage}
                 onRetry={retryMessage}
+                selectMode={selectMode}
+                selected={selectedMessageIds.has(message.id)}
+                onToggleSelect={toggleMessageSelection}
               />
             ))}
             <div ref={messagesEndRef} />
@@ -1833,54 +1947,87 @@ export default function App() {
         </div>
 
         <footer className="composer-panel">
-          {showCompleteHint && !isSending && (
-            <div className="complete-hint">回答完成</div>
-          )}
-          {errorText && <div className="error-banner">{errorText}</div>}
-
-          {pendingImage && (
-            <div className="pending-image-card">
-              <img className="pending-image-preview" src={pendingImage.url} alt="待发送图片" />
-              <div className="pending-image-info">
-                <div className="pending-image-title">已添加图片</div>
-                <div className="pending-image-name">{pendingImage.name}</div>
-              </div>
-              <button className="pending-image-remove" type="button" onClick={clearPendingImage}>
-                移除
+          {selectMode ? (
+            <div className="select-action-bar">
+              <button className="select-action-btn select-action-btn-user" type="button" onClick={selectAllUserMessages}>
+                全选用户
+              </button>
+              <button className="select-action-btn select-action-btn-ai" type="button" onClick={selectAllAssistantMessages}>
+                全选AI
+              </button>
+              <button
+                className="select-action-btn select-action-btn-delete"
+                type="button"
+                onClick={deleteSelectedMessages}
+                disabled={selectedMessageIds.size === 0}
+              >
+                删除({selectedMessageIds.size})
               </button>
             </div>
+          ) : (
+            <>
+              {showCompleteHint && !isSending && (
+                <div className="complete-hint">回答完成</div>
+              )}
+              {errorText && <div className="error-banner">{errorText}</div>}
+
+              {pendingImage && (
+                <div className="pending-image-card">
+                  <img className="pending-image-preview" src={pendingImage.url} alt="待发送图片" />
+                  <div className="pending-image-info">
+                    <div className="pending-image-title">已添加图片</div>
+                    <div className="pending-image-name">{pendingImage.name}</div>
+                  </div>
+                  <button className="pending-image-remove" type="button" onClick={clearPendingImage}>
+                    移除
+                  </button>
+                </div>
+              )}
+
+              <div className={classNames('composer-box', activeMessages.length > 0 && !isSending && 'composer-box-with-manage')}>
+                <button className="upload-button" type="button" onClick={handleUploadClick} aria-label="上传图片">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                </button>
+
+                <textarea
+                  ref={composerRef}
+                  className="composer-input"
+                  rows={1}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={handleComposerKeyDown}
+                  placeholder="输入消息..."
+                />
+
+                {isSending ? (
+                  <button className="send-button stop-button" type="button" onClick={stopStreaming}>
+                    停止
+                  </button>
+                ) : (
+                  <>
+                    {activeMessages.length > 0 && (
+                      <button
+                        className="manage-button"
+                        type="button"
+                        onClick={enterSelectMode}
+                        aria-label="管理消息"
+                      >
+                        管理
+                      </button>
+                    )}
+                    <button
+                      className="send-button"
+                      type="button"
+                      disabled={!canSend}
+                      onClick={() => sendMessage()}
+                    >
+                      发送
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
           )}
-
-          <div className="composer-box">
-            <button className="upload-button" type="button" onClick={handleUploadClick} aria-label="上传图片">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            </button>
-
-            <textarea
-              ref={composerRef}
-              className="composer-input"
-              rows={1}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleComposerKeyDown}
-              placeholder="输入消息..."
-            />
-
-            {isSending ? (
-              <button className="send-button stop-button" type="button" onClick={stopStreaming}>
-                停止
-              </button>
-            ) : (
-              <button
-                className="send-button"
-                type="button"
-                disabled={!canSend}
-                onClick={() => sendMessage()}
-              >
-                发送
-              </button>
-            )}
-          </div>
 
           <input
             ref={fileInputRef}

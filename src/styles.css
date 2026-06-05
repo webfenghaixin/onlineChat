@@ -821,6 +821,10 @@ button:disabled {
   box-shadow: 0 10px 24px rgba(24, 50, 54, 0.08);
 }
 
+.composer-box-with-manage {
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+}
+
 .upload-button,
 .send-button {
   min-width: 58px;
@@ -1549,4 +1553,117 @@ button:disabled {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ========== 选择模式 ========== */
+.chat-header-select {
+  grid-template-columns: auto minmax(0, 1fr) 44px;
+}
+
+.chat-header-select .header-button:disabled {
+  opacity: 0.4;
+}
+
+.message-row-selectable {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.message-row-selectable:active {
+  background: rgba(17, 97, 92, 0.04);
+}
+
+.message-row-selected {
+  background: rgba(17, 97, 92, 0.06);
+  border-radius: 14px;
+}
+
+.message-checkbox {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  margin-top: 24px;
+  background: rgba(17, 97, 92, 0.06);
+  border: 1.5px solid rgba(17, 97, 92, 0.18);
+  color: var(--quiet);
+  transition: all 0.15s ease;
+}
+
+.message-checkbox-checked {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #f8fffb;
+}
+
+.message-content-col {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.select-action-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.select-action-btn {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 14px;
+  font-weight: 800;
+  font-size: 14px;
+  border: 1px solid rgba(17, 97, 92, 0.12);
+  background: rgba(17, 97, 92, 0.06);
+  color: var(--brand-strong);
+}
+
+.select-action-btn:active {
+  background: rgba(17, 97, 92, 0.12);
+}
+
+.select-action-btn-user {
+  background: rgba(17, 97, 92, 0.08);
+}
+
+.select-action-btn-ai {
+  background: rgba(216, 130, 57, 0.08);
+  color: var(--accent);
+  border-color: rgba(216, 130, 57, 0.18);
+}
+
+.select-action-btn-delete {
+  background: rgba(196, 61, 50, 0.08);
+  color: var(--danger);
+  border-color: rgba(196, 61, 50, 0.18);
+}
+
+.select-action-btn-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.manage-button {
+  min-width: 48px;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 14px;
+  color: var(--muted);
+  background: rgba(17, 97, 92, 0.06);
+  border: 1px solid rgba(17, 97, 92, 0.1);
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.manage-button:active {
+  background: rgba(17, 97, 92, 0.12);
 }

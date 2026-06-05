@@ -13,7 +13,6 @@
   --muted: #657076;
   --quiet: #8a9498;
   --line: rgba(40, 68, 72, 0.12);
-  --brand: #11615c;
   --brand: #54c9bf;
   --brand-strong: #0b4542;
   --accent: #d88239;
@@ -674,6 +673,16 @@ button:disabled {
 
 .tool-button-retry:hover {
   background: rgba(216, 130, 57, 0.18);
+}
+
+.tool-button-delete {
+  background: rgba(17, 97, 92, 0.06);
+  color: var(--muted);
+  border-color: rgba(17, 97, 92, 0.1);
+}
+
+.tool-button-delete:hover {
+  background: rgba(17, 97, 92, 0.12);
 }
 
 .markdown-body {

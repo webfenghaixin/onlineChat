@@ -458,6 +458,7 @@ const MessageRow = memo(function MessageRow({
   selectMode,
   selected,
   onToggleSelect,
+  onEnterSelectMode,
 }) {
   const images = getImageParts(message.content);
   const text = getTextParts(message.content);
@@ -539,6 +540,16 @@ const MessageRow = memo(function MessageRow({
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" /></svg>
               )}
             </button>
+            {isAssistant && !isSending && (
+              <button
+                type="button"
+                className="tool-button tool-button-icon tool-button-delete"
+                onClick={() => onEnterSelectMode(message.id)}
+                aria-label="删除"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -582,6 +593,7 @@ export default function App() {
   const [selectedMessageIds, setSelectedMessageIds] = useState(new Set());
   const [drawSelectMode, setDrawSelectMode] = useState(false);
   const [drawSelectedMessageIds, setDrawSelectedMessageIds] = useState(new Set());
+  const [deleteConversationTarget, setDeleteConversationTarget] = useState(null);
 
   const abortControllerRef = useRef(null);
   const drawAbortControllerRef = useRef(null);
@@ -1348,17 +1360,11 @@ export default function App() {
     const userMessage = activeMessages[messageIndex - 1];
     if (userMessage?.role !== 'user') return;
     const userText = getTextParts(userMessage.content).trim();
-    const userImages = getImageParts(userMessage.content);
-    if (!userText && !userImages.length) return;
+    if (!userText) return;
 
-    // 移除失败的 assistant 消息和对应的 user 消息
-    updateConversation(activeConversation.id, (conversation) => ({
-      ...conversation,
-      messages: conversation.messages.filter((m) => m.id !== message.id && m.id !== userMessage.id),
-    }));
-
-    // 用原始内容重新发送
-    sendMessage(userMessage.content);
+    // 将用户消息内容填入输入框，方便重新编辑
+    setDraft(userText);
+    composerRef.current?.focus();
   }
 
   async function copyMessage(message) {
@@ -1512,9 +1518,13 @@ export default function App() {
     composerRef.current?.focus();
   }
 
-  function enterSelectMode() {
+  function enterSelectMode(preselectId) {
     setSelectMode(true);
-    setSelectedMessageIds(new Set());
+    if (preselectId) {
+      setSelectedMessageIds(new Set([preselectId]));
+    } else {
+      setSelectedMessageIds(new Set());
+    }
   }
 
   function exitSelectMode() {
@@ -1724,7 +1734,7 @@ export default function App() {
     return (
       <div className="gate-shell">
         <section className="gate-card">
-          <img className="gate-logo" src="/logo-2.png" alt="" />
+          {/* <img className="gate-logo" src="/logo-2.png" alt="" /> */}
           {/* <h1>lightChat</h1> */}
           <p>loading...</p>
         </section>
@@ -1864,7 +1874,7 @@ export default function App() {
                       className="history-delete"
                       type="button"
                       aria-label="删除对话"
-                      onClick={() => removeConversation(conversation.id)}
+                      onClick={() => setDeleteConversationTarget(conversation.id)}
                     >
                       删除
                     </button>
@@ -2075,6 +2085,29 @@ export default function App() {
         />
       )}
 
+      {deleteConversationTarget && (
+        <div className="confirm-layer" role="dialog" aria-modal="true" aria-labelledby="delete-conversation-title">
+          <button
+            className="confirm-backdrop"
+            type="button"
+            aria-label="取消删除"
+            onClick={() => setDeleteConversationTarget(null)}
+          />
+          <div className="confirm-dialog">
+            <h2 id="delete-conversation-title">删除这条对话？</h2>
+            <p>对话中的所有消息都会被删除，此操作不可撤销。</p>
+            <div className="confirm-actions">
+              <button className="confirm-button confirm-button-secondary" type="button" onClick={() => setDeleteConversationTarget(null)}>
+                取消
+              </button>
+              <button className="confirm-button confirm-button-danger" type="button" onClick={() => { removeConversation(deleteConversationTarget); setDeleteConversationTarget(null); }}>
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="phone-shell">
         <header className={classNames('chat-header', selectMode ? 'chat-header-select' : 'chat-header-3col')}>
           {selectMode ? (
@@ -2140,6 +2173,7 @@ export default function App() {
                 selectMode={selectMode}
                 selected={selectedMessageIds.has(message.id)}
                 onToggleSelect={toggleMessageSelection}
+                onEnterSelectMode={enterSelectMode}
               />
             ))}
             <div ref={messagesEndRef} />
@@ -2191,19 +2225,6 @@ export default function App() {
                   </div>
                   <button className="pending-image-remove" type="button" onClick={clearPendingImage}>
                     移除
-                  </button>
-                </div>
-              )}
-
-              {activeMessages.length > 0 && !isSending && (
-                <div className="composer-top-actions">
-                  <button
-                    className="manage-button"
-                    type="button"
-                    onClick={enterSelectMode}
-                    aria-label="管理消息"
-                  >
-                    管理
                   </button>
                 </div>
               )}

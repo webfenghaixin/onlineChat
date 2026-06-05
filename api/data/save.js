@@ -5,8 +5,54 @@ import {
   handleOptions,
   authenticate,
   createRedis,
+  getRedisJson,
   setRedisJson,
 } from '../lib/auth-utils.js';
+
+function mergeDrawMessage(incomingMessage, existingMessage) {
+  if (!incomingMessage || !existingMessage) return incomingMessage;
+  if (incomingMessage.role !== 'assistant' || existingMessage.role !== 'assistant') {
+    return incomingMessage;
+  }
+
+  const imageUrl = incomingMessage.imageUrl || existingMessage.imageUrl || '';
+
+  return {
+    ...incomingMessage,
+    imageUrl,
+    error: imageUrl ? undefined : incomingMessage.error || existingMessage.error || undefined,
+    taskId: incomingMessage.taskId || existingMessage.taskId || undefined,
+    durationSeconds:
+      typeof incomingMessage.durationSeconds === 'number'
+        ? incomingMessage.durationSeconds
+        : existingMessage.durationSeconds,
+  };
+}
+
+function mergeDrawConversations(incomingConversations = [], existingConversations = []) {
+  if (!Array.isArray(incomingConversations)) return [];
+  if (!Array.isArray(existingConversations) || !existingConversations.length) {
+    return incomingConversations;
+  }
+
+  const existingById = new Map(existingConversations.map((conversation) => [conversation.id, conversation]));
+
+  return incomingConversations.map((incomingConversation) => {
+    const existingConversation = existingById.get(incomingConversation.id);
+    if (!existingConversation) return incomingConversation;
+
+    const existingMessagesById = new Map(
+      (existingConversation.messages || []).map((message) => [message.id, message]),
+    );
+
+    return {
+      ...incomingConversation,
+      messages: (incomingConversation.messages || []).map((message) =>
+        mergeDrawMessage(message, existingMessagesById.get(message.id)),
+      ),
+    };
+  });
+}
 
 export default async function handler(request) {
   if (request.method === 'OPTIONS') return handleOptions();
@@ -31,11 +77,18 @@ export default async function handler(request) {
     return jsonResponse(400, { error: '数据格式错误' });
   }
 
-  await setRedisJson(redis, `data:${auth.username}`, {
+  const dataKey = `data:${auth.username}`;
+  const existingData = (await getRedisJson(redis, dataKey)) || {};
+  const mergedDrawConversations = mergeDrawConversations(
+    drawConversations || [],
+    existingData.drawConversations || [],
+  );
+
+  await setRedisJson(redis, dataKey, {
     conversations,
     settings,
     activeConversationId,
-    drawConversations: drawConversations || [],
+    drawConversations: mergedDrawConversations,
     activeDrawConversationId: activeDrawConversationId || null,
     updatedAt: Date.now(),
   });

@@ -78,19 +78,14 @@ export default async function handler(req, res) {
   }
 
   if ((task.status === 'queued' || task.status === 'running') && !task.imageUrl && !task.error) {
-    const lockKey = `drawTaskLock:${auth.username}:${taskId}`;
-    const lockAcquired = await redis.set(lockKey, '1', { nx: true, ex: 600 });
-    if (lockAcquired) {
-      const envKey = task.options?.source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
-      await runTask({
-        redis,
-        taskKey,
-        task,
-        apiKey: process.env[envKey] || '',
-      });
-      task = await getRedisJson(redis, taskKey);
-      await redis.del(lockKey).catch(() => {});
-    }
+    const envKey = task.options?.source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
+    await runTask({
+      redis,
+      taskKey,
+      task,
+      apiKey: process.env[envKey] || '',
+    });
+    task = await getRedisJson(redis, taskKey);
   }
 
   sendJson(res, 200, {

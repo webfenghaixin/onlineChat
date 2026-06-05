@@ -61,6 +61,11 @@ async function setTask(redis, key, task) {
   await redis.set(key, JSON.stringify(task), { ex: TASK_TTL_SECONDS });
 }
 
+function resolveTaskLockKey(task) {
+  if (!task?.owner || !task?.id) return null;
+  return `drawTaskLock:${task.owner}:${task.id}`;
+}
+
 function normalizeTaskMetadata(metadata, taskId) {
   if (!metadata || typeof metadata !== 'object') return null;
   const conversationId = String(metadata.conversationId || '');
@@ -150,6 +155,13 @@ async function upsertDrawTaskRecord(redis, username, metadata, patch = {}) {
 }
 
 export async function runTask({ redis, taskKey, task, apiKey }) {
+  const lockKey = resolveTaskLockKey(task);
+  let lockAcquired = false;
+  if (lockKey) {
+    lockAcquired = Boolean(await redis.set(lockKey, '1', { nx: true, ex: 600 }));
+    if (!lockAcquired) return;
+  }
+
   const runningTask = {
     ...task,
     status: 'running',
@@ -189,6 +201,10 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
         error: errorMessage,
       });
     } catch {}
+  } finally {
+    if (lockKey && lockAcquired) {
+      await redis.del(lockKey).catch(() => {});
+    }
   }
 }
 

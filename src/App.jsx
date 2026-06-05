@@ -584,6 +584,7 @@ export default function App() {
   const [drawSelectedMessageIds, setDrawSelectedMessageIds] = useState(new Set());
 
   const abortControllerRef = useRef(null);
+  const drawAbortControllerRef = useRef(null);
   const composerRef = useRef(null);
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -593,6 +594,7 @@ export default function App() {
   const cloudSavingRef = useRef(false);
   const drawFileInputRef = useRef(null);
   const resumedDrawTasksRef = useRef(new Set());
+  const activeDrawTaskIdsRef = useRef(new Set());
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
@@ -754,6 +756,7 @@ export default function App() {
           message.taskId &&
           !message.imageUrl &&
           !message.error &&
+          !activeDrawTaskIdsRef.current.has(message.taskId) &&
           !resumedDrawTasksRef.current.has(message.taskId)
         ) {
           pendingTasks.push({
@@ -770,6 +773,7 @@ export default function App() {
 
     pendingTasks.forEach((task) => {
       resumedDrawTasksRef.current.add(task.taskId);
+      activeDrawTaskIdsRef.current.add(task.taskId);
       const controller = new AbortController();
 
       pollDrawTask({
@@ -798,6 +802,8 @@ export default function App() {
               : message,
           ),
         }));
+      }).finally(() => {
+        activeDrawTaskIdsRef.current.delete(task.taskId);
       });
 
     });
@@ -873,6 +879,7 @@ export default function App() {
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
+      drawAbortControllerRef.current?.abort();
     };
   }, []);
 
@@ -1034,12 +1041,6 @@ export default function App() {
   }
 
   function closeDrawMode() {
-    if (isGenerating) {
-      abortControllerRef.current?.abort();
-      abortControllerRef.current = null;
-      setIsGenerating(false);
-      setDrawElapsedSeconds(0);
-    }
     setDrawMode(false);
     setErrorText('');
     setDrawDrawerOpen(false);
@@ -1048,6 +1049,14 @@ export default function App() {
     setDrawSelectMode(false);
     setDrawSelectedMessageIds(new Set());
     setStatusText('已就绪');
+  }
+
+  function stopDrawGeneration() {
+    drawAbortControllerRef.current?.abort();
+    drawAbortControllerRef.current = null;
+    setIsGenerating(false);
+    setDrawElapsedSeconds(0);
+    setStatusText('图片生成已停止');
   }
 
   function createNewDrawConversation() {
@@ -1194,7 +1203,8 @@ export default function App() {
     setDrawPendingImage(null);
 
     const controller = new AbortController();
-    abortControllerRef.current = controller;
+    drawAbortControllerRef.current = controller;
+    let currentTaskId = '';
 
     try {
       await generateImage({
@@ -1216,6 +1226,8 @@ export default function App() {
           assistantMessage,
         },
         onTaskStart: (taskId) => {
+          currentTaskId = taskId;
+          activeDrawTaskIdsRef.current.add(taskId);
           updateDrawConversation(targetConvId, (conv) => ({
             ...conv,
             messages: conv.messages.map((m) =>
@@ -1258,7 +1270,12 @@ export default function App() {
         }));
       }
     } finally {
-      abortControllerRef.current = null;
+      if (drawAbortControllerRef.current === controller) {
+        drawAbortControllerRef.current = null;
+      }
+      if (currentTaskId) {
+        activeDrawTaskIdsRef.current.delete(currentTaskId);
+      }
       setIsGenerating(false);
     }
   }
@@ -2639,7 +2656,7 @@ export default function App() {
                       disabled={isGenerating}
                     />
                     {isGenerating ? (
-                      <button className="send-button stop-button" type="button" onClick={closeDrawMode}>
+                      <button className="send-button stop-button" type="button" onClick={stopDrawGeneration}>
                         停止
                       </button>
                     ) : (

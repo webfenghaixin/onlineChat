@@ -666,7 +666,7 @@ async function generateImageViaImagesApi({ url, headers, model, prompt, referenc
     image: referenceImage ? [referenceImage] : undefined,
     size: size || '1024x1024',
     quality: quality || 'medium',
-    response_format: 'url',
+    response_format: 'b64_json',
   });
 
   const response = await fetch(url, {

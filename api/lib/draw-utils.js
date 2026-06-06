@@ -178,15 +178,74 @@ export async function runDrawRequest({ apiKey, options, signal }) {
 
   if (cleaned.apiMode === 'images') {
     const data = await response.json();
+    const imageBase64 = extractImageBase64FromPayload(data);
+    if (imageBase64) return { imageBase64 };
     const imageUrl = extractImageUrlFromPayload(data);
-    if (imageUrl) return { imageUrl };
+    if (imageUrl) {
+      if (imageUrl.startsWith('data:image/')) {
+        const dataMatch = imageUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+        if (dataMatch) return { imageBase64: dataMatch[1] };
+      }
+      const downloaded = await downloadImageAsBase64(imageUrl);
+      if (downloaded) return { imageBase64: downloaded };
+      return { imageBase64: null, imageUrl };
+    }
     throw new Error(createNoImageMessage(JSON.stringify(data).slice(0, 500), 'Images API'));
   }
 
   const fullText = await readChatResponseText(response);
   const imageUrl = extractImageUrlFromContent(fullText);
-  if (imageUrl) return { imageUrl };
+  if (imageUrl) {
+    if (imageUrl.startsWith('data:image/')) {
+      const dataMatch = imageUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+      if (dataMatch) return { imageBase64: dataMatch[1] };
+    }
+    const downloaded = await downloadImageAsBase64(imageUrl);
+    if (downloaded) return { imageBase64: downloaded };
+    return { imageBase64: null, imageUrl };
+  }
   throw new Error(createNoImageMessage(fullText, 'Chat API'));
+}
+
+function extractImageBase64FromPayload(payload) {
+  if (!payload) return null;
+
+  if (typeof payload === 'string') {
+    const dataMatch = payload.match(/^data:image\/[^;]+;base64,(.+)$/);
+    if (dataMatch) return dataMatch[1];
+    return null;
+  }
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const base64 = extractImageBase64FromPayload(item);
+      if (base64) return base64;
+    }
+    return null;
+  }
+
+  if (typeof payload !== 'object') return null;
+
+  if (typeof payload.b64_json === 'string') return payload.b64_json;
+
+  const priorityKeys = ['data', 'images', 'image', 'output'];
+  for (const key of priorityKeys) {
+    const base64 = extractImageBase64FromPayload(payload[key]);
+    if (base64) return base64;
+  }
+
+  return null;
+}
+
+async function downloadImageAsBase64(imageUrl) {
+  try {
+    const response = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) return null;
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer).toString('base64');
+  } catch {
+    return null;
+  }
 }
 
 function buildImagesBody(options) {
@@ -196,7 +255,7 @@ function buildImagesBody(options) {
     image: options.referenceImage ? [options.referenceImage] : undefined,
     size: options.size,
     quality: options.quality,
-    response_format: 'url',
+    response_format: 'b64_json',
   };
 }
 

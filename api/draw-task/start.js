@@ -13,6 +13,7 @@ const CORS_HEADERS = {
 };
 
 const TASK_TTL_SECONDS = 24 * 60 * 60;
+const IMAGE_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 function setCorsHeaders(res) {
   for (const [key, value] of Object.entries(CORS_HEADERS)) {
@@ -176,15 +177,24 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       options: task.options,
     });
 
+    let persistentImageUrl;
+    if (result.imageBase64) {
+      const imageKey = `drawImage:${task.id}`;
+      await redis.set(imageKey, result.imageBase64, { ex: IMAGE_TTL_SECONDS });
+      persistentImageUrl = `/api/draw-image?id=${task.id}`;
+    } else {
+      persistentImageUrl = result.imageUrl || '';
+    }
+
     await setTask(redis, taskKey, {
       ...runningTask,
       status: 'succeeded',
-      imageUrl: result.imageUrl,
+      imageUrl: persistentImageUrl,
       updatedAt: Date.now(),
       completedAt: Date.now(),
     });
     await upsertDrawTaskRecord(redis, task.owner, task.metadata, {
-      imageUrl: result.imageUrl,
+      imageUrl: persistentImageUrl,
       error: undefined,
     });
   } catch (error) {

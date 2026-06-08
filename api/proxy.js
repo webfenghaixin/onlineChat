@@ -9,6 +9,7 @@ const CORS_HEADERS = {
 };
 
 const GEMINI_BASE_URL = 'https://www.right.codes/gemini';
+const GEMINI_DEFAULT_MODEL = 'gemini-3.1-pro';
 const GEMINI_MODEL_PREFIX = 'gemini-';
 
 const SOURCE_ENV_MAP = {
@@ -72,9 +73,11 @@ export default async function handler(request) {
       parsedBody = null;
     }
   }
-  const model = requestedModel || parsedBody?.model || '';
-  const targetUrl = source === 'rightcode' && isGeminiModel(model)
-    ? `${GEMINI_BASE_URL}/v1beta/models/${model}:streamGenerateContent?alt=sse`
+  const hasGeminiPayloadShape = Array.isArray(parsedBody?.contents);
+  const geminiModel = requestedModel || parsedBody?.model || GEMINI_DEFAULT_MODEL;
+  const useGeminiEndpoint = source === 'rightcode' && (isGeminiModel(requestedModel) || hasGeminiPayloadShape);
+  const targetUrl = useGeminiEndpoint
+    ? `${GEMINI_BASE_URL}/v1beta/models/${geminiModel}:streamGenerateContent?alt=sse`
     : sourceConfig.endpoint || '';
 
   if (!targetUrl) {
@@ -94,10 +97,10 @@ export default async function handler(request) {
 
   const upstreamHeaders = {
     'Content-Type': contentType,
-    Accept: isGeminiModel(model) ? 'text/event-stream' : request.headers.get('accept') || '*/*',
+    Accept: useGeminiEndpoint ? 'text/event-stream' : request.headers.get('accept') || '*/*',
   };
   if (serverApiKey) {
-    if (isGeminiModel(model)) {
+    if (useGeminiEndpoint) {
       upstreamHeaders['x-goog-api-key'] = serverApiKey;
     } else {
       upstreamHeaders.Authorization = `Bearer ${serverApiKey}`;

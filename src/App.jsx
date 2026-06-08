@@ -22,11 +22,14 @@ const RIGHTCODE_PRICING_OPTIONS = [
   { value: 'daily', label: '日抛' },
 ];
 
+const GEMINI_MODEL_ID = 'gemini-3.1-pro';
+
 const MODEL_OPTIONS = [
   { value: 'gpt-5.5', label: 'GPT-5.5' },
   { value: 'gpt-5.4', label: 'GPT-5.4' },
   { value: 'gpt-5.4-medium', label: 'GPT-5.4-Medium' },
   { value: 'gpt-5.4-high', label: 'GPT-5.4-High' },
+  { value: GEMINI_MODEL_ID, label: 'Gemini 3.1 Pro' },
 ];
 
 const DRAW_SIZE_OPTIONS = [
@@ -87,6 +90,31 @@ const defaultSettings = {
   drawQuality: 'medium',
   drawApiMode: 'images',
 };
+
+function isGeminiModel(model) {
+  return String(model || '').toLowerCase().startsWith('gemini');
+}
+
+function normalizeModelSettings(settings) {
+  const nextSettings = {
+    ...settings,
+    rightcodePricing: 'regular',
+    stream: true,
+    useProxy: true,
+    proxyPath: '/api/proxy',
+  };
+
+  if (isGeminiModel(nextSettings.model)) {
+    nextSettings.source = 'rightcode';
+    nextSettings.requestMode = 'gemini';
+    nextSettings.endpoint = '';
+    nextSettings.apiKey = '';
+  } else {
+    nextSettings.requestMode = 'chat';
+  }
+
+  return nextSettings;
+}
 
 const DRAW_REFERENCE_MAX_DIMENSION = 1536;
 const DRAW_REFERENCE_MAX_BYTES = 1.5 * 1024 * 1024;
@@ -247,10 +275,10 @@ function normalizeState(parsed) {
       : [];
 
   return {
-    settings: {
+    settings: normalizeModelSettings({
       ...defaultSettings,
       ...(parsed?.settings || {}),
-    },
+    }),
     conversations,
     activeConversationId: parsed?.activeConversationId || conversations[0].id,
     drawConversations,
@@ -1913,6 +1941,9 @@ export default function App() {
               </select>
             </label>
 
+            {false && (
+              <>
+
             <label className="field">
               <span className="field-label">接口来源</span>
               <select
@@ -1981,13 +2012,18 @@ export default function App() {
               </>
             )}
 
+              </>
+            )}
+
             <label className="field">
               <span className="field-label">模型名</span>
               <select
                 className="field-input"
                 value={settings.model}
                 onChange={(event) =>
-                  setSettings((current) => ({ ...current, model: event.target.value }))
+                  setSettings((current) =>
+                    normalizeModelSettings({ ...current, model: event.target.value }),
+                  )
                 }
               >
                 {MODEL_OPTIONS.map((option) => (
@@ -2047,6 +2083,9 @@ export default function App() {
               </label>
             </div>
 
+            {false && (
+              <>
+
             <label className="check-field">
               <input
                 type="checkbox"
@@ -2080,6 +2119,9 @@ export default function App() {
                 placeholder="/api/proxy 或 https://你的代理地址"
               />
             </label>
+
+              </>
+            )}
 
             <button className="secondary-button wide-button" type="button" onClick={handleLogout}>
               退出登录

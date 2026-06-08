@@ -4,9 +4,12 @@ export const config = {
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Source, X-Pricing',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Source, X-Model',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
+
+const GEMINI_BASE_URL = 'https://www.right.codes/gemini';
+const GEMINI_MODEL_PREFIX = 'gemini-';
 
 const SOURCE_ENV_MAP = {
   luxee: {
@@ -16,9 +19,6 @@ const SOURCE_ENV_MAP = {
   rightcode: {
     key: 'API_KEY_RIGHTCODE',
     endpoint: 'https://www.right.codes/codex-pro/v1/chat/completions',
-    pricing: {
-      daily: 'https://www.right.codes/codex/v1/responses',
-    },
   },
 };
 
@@ -33,6 +33,10 @@ function jsonResponse(statusCode, body, extraHeaders = {}) {
   });
 }
 
+function isGeminiModel(model) {
+  return String(model || '').toLowerCase().startsWith(GEMINI_MODEL_PREFIX);
+}
+
 export default async function handler(request) {
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -43,7 +47,7 @@ export default async function handler(request) {
   }
 
   const source = (request.headers.get('x-source') || 'luxee').toLowerCase();
-  const pricing = (request.headers.get('x-pricing') || '').toLowerCase();
+  const requestedModel = request.headers.get('x-model') || '';
   const sourceConfig = SOURCE_ENV_MAP[source];
 
   if (!sourceConfig) {
@@ -51,18 +55,31 @@ export default async function handler(request) {
   }
 
   const serverApiKey = process.env[sourceConfig.key] || '';
-  let serverEndpoint = '';
-  if (pricing && sourceConfig.pricing && sourceConfig.pricing[pricing]) {
-    serverEndpoint = sourceConfig.pricing[pricing];
-  } else {
-    serverEndpoint = sourceConfig.endpoint || '';
+  const contentType = request.headers.get('content-type') || 'application/json';
+
+  let requestBody;
+  try {
+    requestBody = await request.text();
+  } catch {
+    return jsonResponse(400, { error: 'Failed to read request body.' });
   }
 
-  if (!serverEndpoint) {
+  let parsedBody = null;
+  if (contentType.includes('application/json')) {
+    try {
+      parsedBody = JSON.parse(requestBody || '{}');
+    } catch {
+      parsedBody = null;
+    }
+  }
+  const model = requestedModel || parsedBody?.model || '';
+  const targetUrl = source === 'rightcode' && isGeminiModel(model)
+    ? `${GEMINI_BASE_URL}/v1beta/models/${model}:streamGenerateContent?alt=sse`
+    : sourceConfig.endpoint || '';
+
+  if (!targetUrl) {
     return jsonResponse(500, { error: `Server endpoint not configured for source: ${source}.` });
   }
-
-  const targetUrl = serverEndpoint;
 
   let parsedUrl;
   try {
@@ -75,24 +92,16 @@ export default async function handler(request) {
     return jsonResponse(500, { error: 'Server endpoint must use http or https.' });
   }
 
-  const contentType = request.headers.get('content-type') || 'application/json';
-
-  const authorization = serverApiKey
-    ? `Bearer ${serverApiKey}`
-    : '';
-
-  let requestBody;
-  try {
-    requestBody = await request.text();
-  } catch {
-    return jsonResponse(400, { error: 'Failed to read request body.' });
-  }
-
   const upstreamHeaders = {
     'Content-Type': contentType,
+    Accept: isGeminiModel(model) ? 'text/event-stream' : request.headers.get('accept') || '*/*',
   };
-  if (authorization) {
-    upstreamHeaders.Authorization = authorization;
+  if (serverApiKey) {
+    if (isGeminiModel(model)) {
+      upstreamHeaders['x-goog-api-key'] = serverApiKey;
+    } else {
+      upstreamHeaders.Authorization = `Bearer ${serverApiKey}`;
+    }
   }
 
   try {

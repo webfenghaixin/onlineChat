@@ -4,6 +4,7 @@ const SSE_BOUNDARY = '\n\n';
 const DRAW_TASK_POLL_INTERVAL_MS = 10000;
 const DRAW_TASK_POLL_INTERVAL_AFTER_30S_MS = 3000;
 const DRAW_TASK_SLOW_POLL_WINDOW_MS = 30000;
+const GEMINI_MODEL_PREFIX = 'gemini-';
 
 function normalizeDrawErrorMessage(rawText, status, apiModeLabel = '当前模式') {
   const text = String(rawText || '').trim();
@@ -84,6 +85,10 @@ function collectTextFromValue(value) {
   return '';
 }
 
+function isGeminiModel(model) {
+  return String(model || '').toLowerCase().startsWith(GEMINI_MODEL_PREFIX);
+}
+
 function normalizeMessageContent(content) {
   if (Array.isArray(content)) {
     return content;
@@ -100,6 +105,16 @@ function normalizeMessageContent(content) {
 function extractTextFromEvent(payload) {
   if (!payload || typeof payload !== 'object') {
     return '';
+  }
+
+  if (Array.isArray(payload.candidates)) {
+    return payload.candidates
+      .map((candidate) =>
+        (candidate?.content?.parts || [])
+          .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+          .join(''),
+      )
+      .join('');
   }
 
   if (typeof payload.delta === 'string') {
@@ -182,29 +197,70 @@ function buildMessagesPayload(messages, systemPrompt) {
   ];
 }
 
+function dataUrlToInlineData(url) {
+  if (typeof url !== 'string') {
+    return null;
+  }
+
+  const match = url.match(/^data:(.+?);base64,(.+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    mime_type: match[1],
+    data: match[2],
+  };
+}
+
+function buildGeminiRequestBody(settings, messages) {
+  const normalizedMessages = buildMessagesPayload(messages, settings.systemPrompt);
+  const systemMessage = normalizedMessages.find((message) => message.role === 'system');
+  const conversationMessages = normalizedMessages.filter((message) => message.role !== 'system');
+
+  const contents = conversationMessages.map((message) => ({
+    role: message.role === 'assistant' ? 'model' : 'user',
+    parts: message.content
+      .map((item) => {
+        if (item?.type === 'text' && typeof item.text === 'string' && item.text) {
+          return { text: item.text };
+        }
+
+        if (item?.type === 'image_url') {
+          const inlineData = dataUrlToInlineData(item.image_url?.url);
+          if (inlineData) {
+            return { inline_data: inlineData };
+          }
+        }
+
+        return null;
+      })
+      .filter(Boolean),
+  }));
+
+  return {
+    contents,
+    systemInstruction: systemMessage
+      ? {
+          parts: systemMessage.content
+            .filter((item) => item?.type === 'text' && item.text)
+            .map((item) => ({ text: item.text })),
+        }
+      : undefined,
+    generationConfig: {
+      temperature: settings.temperature,
+      maxOutputTokens: Number(settings.maxOutputTokens) || undefined,
+    },
+  };
+}
+
 function buildRequestBody(settings, messages) {
   const { model, temperature, maxOutputTokens, stream, systemPrompt } = settings;
-  const normalizedMessages = buildMessagesPayload(messages, systemPrompt);
-  const isDaily = settings.source === 'rightcode' && settings.rightcodePricing === 'daily';
-
-  if (isDaily) {
-    return {
-      model: model || undefined,
-      input: normalizedMessages.map((message) => {
-        const text = message.content
-          .filter((item) => item.type === 'text')
-          .map((item) => item.text || '')
-          .join('\n');
-        return {
-          role: message.role,
-          content: text,
-        };
-      }),
-      temperature,
-      max_output_tokens: Number(maxOutputTokens) || undefined,
-      stream,
-    };
+  if (isGeminiModel(model)) {
+    return buildGeminiRequestBody(settings, messages);
   }
+
+  const normalizedMessages = buildMessagesPayload(messages, systemPrompt);
 
   return {
     model: model || undefined,
@@ -232,7 +288,7 @@ function cleanUndefinedValues(value) {
 }
 
 function resolveRequestUrl(settings) {
-  if (settings.useProxy) {
+  if (settings.useProxy !== false) {
     const proxyPath = settings.proxyPath?.trim() || '/api/proxy';
     if (/^https?:\/\//i.test(proxyPath)) {
       return proxyPath;
@@ -248,11 +304,9 @@ function buildRequestHeaders(settings) {
     'Content-Type': 'application/json',
   };
 
-  if (settings.useProxy) {
+  if (settings.useProxy !== false) {
     headers['X-Source'] = settings.source || 'luxee';
-    if (settings.source === 'rightcode' && settings.rightcodePricing) {
-      headers['X-Pricing'] = settings.rightcodePricing;
-    }
+    headers['X-Model'] = settings.model || '';
   } else {
     if (settings.apiKey.trim()) {
       headers.Authorization = `Bearer ${settings.apiKey.trim()}`;

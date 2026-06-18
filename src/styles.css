@@ -2134,82 +2134,108 @@ button:disabled {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ========== 桌面端兼容 (>=561px) ========== */
+/* ========== 桌面端适配 (>=561px): 去掉手机壳效果，自然铺满 ========== */
 
-/* 平板适配 (561px ~ 900px) */
-@media (min-width: 561px) and (max-width: 900px) {
+/* 平板+桌面通用 (>=561px) */
+@media (min-width: 561px) {
+  /* chat-app 容器：去掉居中留白，让内容自然展开 */
+  .chat-app {
+    padding: 0;
+    background:
+      linear-gradient(180deg, #eef6f4 0%, #e8f2ee 50%, #e5f0ec 100%);
+  }
+
+  /* phone-shell：去掉手机壳效果，变为桌面级面板 */
   .phone-shell {
-    border-radius: 20px;
-    max-width: 700px;
+    max-width: 760px;
+    margin: 0 auto;
+    border-radius: 16px;
+    border: 1px solid rgba(17, 97, 92, 0.08);
+    box-shadow:
+      0 2px 12px rgba(24,44,48,0.05),
+      0 8px 32px rgba(17,61,58,0.04);
+    background:
+      linear-gradient(180deg, rgba(255,255,252,0.98) 0%, rgba(250,252,249,0.96) 100%);
   }
 
+  /* Header */
   .chat-header {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-
-  .message-list {
-    padding: 18px 18px 28px;
-  }
-
-  .composer-panel {
-    padding: 10px 16px;
-  }
-
-  .drawer {
-    width: 340px;
-  }
-}
-
-/* 大屏桌面端 (>=901px) */
-@media (min-width: 901px) {
-  .phone-shell {
-    max-width: 520px;
-    border-radius: 28px;
-  }
-
-  .chat-header {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: 18px;
+    padding-right: 18px;
+    min-height: calc(60px + env(safe-area-inset-top));
   }
 
   .chat-title h1 {
-    max-width: min(54vw, 320px);
+    font-size: var(--font-title);
+    max-width: none;
   }
 
   .chat-title p {
-    max-width: min(48vw, 260px);
+    max-width: none;
   }
 
+  /* 消息列表 */
   .message-list {
-    padding: 18px 16px 28px;
+    padding: 20px 20px 32px;
   }
 
-  .composer-panel {
-    padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
-  }
-
-  .drawer {
-    width: min(380px, 32vw);
-  }
-
-  /* 桌面端 gate-card 保持居中但不撑满 */
-  .gate-card {
-    max-width: 420px;
-  }
-
-  /* 桌面端欢迎面板更宽敞 */
-  .welcome-panel h2 {
-    font-size: var(--font-welcome-title);
-  }
-
-  /* 桌面端消息气泡限制最大宽度，保持阅读舒适度 */
   .message-bubble {
-    max-width: 85%;
+    max-width: 80%;
   }
 
   .message-assistant .message-bubble {
-    max-width: 75%;
+    max-width: 70%;
+  }
+
+  /* Composer */
+  .composer-panel {
+    padding: 12px 18px calc(14px + env(safe-area-inset-bottom));
+  }
+
+  /* Drawer */
+  .drawer {
+    width: min(360px, 32vw);
+  }
+
+  /* 登录页：桌面端也居中显示，但不要手机壳感 */
+  .gate-shell {
+    background-color: #eef6f4;
+    background-image: url('/h5-bg-top.png'), url('/h5-bg-bottom.png');
+    background-repeat: no-repeat, no-repeat;
+    background-position: top center, bottom center;
+    background-size: 100% auto, 100% auto;
+  }
+}
+
+/* 大屏桌面 (>=1024px): 更宽敞 */
+@media (min-width: 1024px) {
+  .phone-shell {
+    max-width: 840px;
+    border-radius: 18px;
+  }
+
+  .message-list {
+    padding: 24px 24px 36px;
+  }
+
+  .composer-panel {
+    padding: 14px 22px calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .chat-header {
+    padding-left: 22px;
+    padding-right: 22px;
+  }
+
+  .drawer {
+    width: min(380px, 34vw);
+  }
+}
+
+/* 超大屏 (>=1400px): 不再放大，保持舒适阅读宽度 */
+@media (min-width: 1400px) {
+  .phone-shell {
+    max-width: 860px;
   }
 }
 

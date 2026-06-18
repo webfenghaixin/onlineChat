@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { classNames, formatTime, formatDateTime, formatDuration, renderMarkdown } from '../lib/utils';
 import { DRAW_SIZE_OPTIONS, DRAW_QUALITY_OPTIONS, DRAW_API_MODE_OPTIONS } from '../lib/constants';
 import { prepareDrawReferenceImage } from '../lib/image-utils';
@@ -48,6 +49,19 @@ export default function DrawPage({
   drawFileInputRef,
   authState,
 }) {
+  const [copiedId, setCopiedId] = useState(null);
+
+  async function handleCopy(msg) {
+    try {
+      const textToCopy = msg.role === 'user' ? msg.content : (msg.prompt || msg.content || '');
+      await navigator.clipboard.writeText(textToCopy);
+      setCopiedId(msg.id);
+      setTimeout(() => setCopiedId(null), 1800);
+    } catch {
+      // fallback: do nothing
+    }
+  }
+
   return (
     <div className="draw-page">
       {/* Draw drawer (conversation list) */}
@@ -214,6 +228,22 @@ export default function DrawPage({
                         {msg.content}
                         <span className="draw-msg-config">{DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
                       </div>
+                      {!drawSelectMode && (
+                        <div className={classNames('message-tools', 'message-tools-user')}>
+                          <button
+                            type="button"
+                            className={classNames('tool-button tool-button-icon', copiedId === msg.id && 'tool-button-copied')}
+                            onClick={() => handleCopy(msg)}
+                            aria-label="复制"
+                          >
+                            {copiedId === msg.id ? (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
+                            ) : (
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" /></svg>
+                            )}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </article>
                 );
@@ -254,6 +284,9 @@ export default function DrawPage({
                         )}
                         {!drawSelectMode && (
                           <div className="draw-result-actions">
+                            <button className="tool-button" type="button" onClick={() => handleCopy(msg)}>
+                              {copiedId === msg.id ? '已复制' : '复制提示词'}
+                            </button>
                             <button className="tool-button" type="button" onClick={() => downloadImage(msg.imageUrl, msg.prompt)}>
                               保存到相册
                             </button>

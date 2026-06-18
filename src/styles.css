@@ -54,8 +54,8 @@ body {
   overflow: hidden;
   font-size: var(--font-body);
   /* 移动端：禁止长按选中文本（除输入框外） */
-  -webkit-user-select: none;
-  user-select: none;
+  /* -webkit-user-select: none;
+  user-select: none; */
 }
 
 body input,
@@ -705,6 +705,8 @@ button:disabled {
   font-size: var(--font-bubble);
   line-height: 1.72;
   word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .message-assistant .message-bubble {
@@ -2147,7 +2149,7 @@ button:disabled {
 
   /* phone-shell：去掉手机壳效果，变为桌面级面板 */
   .phone-shell {
-    max-width: 760px;
+    max-width: 1200px;
     margin: 0 auto;
     border-radius: 16px;
     border: 1px solid rgba(17, 97, 92, 0.08);
@@ -2210,7 +2212,7 @@ button:disabled {
 /* 大屏桌面 (>=1024px): 更宽敞 */
 @media (min-width: 1024px) {
   .phone-shell {
-    max-width: 840px;
+    max-width: 1200px;
     border-radius: 18px;
   }
 
@@ -2235,7 +2237,7 @@ button:disabled {
 /* 超大屏 (>=1400px): 不再放大，保持舒适阅读宽度 */
 @media (min-width: 1400px) {
   .phone-shell {
-    max-width: 860px;
+    max-width: 1200px;
   }
 }
 

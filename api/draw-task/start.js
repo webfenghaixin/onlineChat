@@ -4,6 +4,7 @@ export const config = {
 
 import { createRedis, getRedisJson, setRedisJson, verifyJWT } from '../lib/auth-utils.js';
 import { cleanDrawOptions, runDrawRequest } from '../lib/draw-utils.js';
+import { put } from '@vercel/blob';
 import { waitUntil } from '@vercel/functions';
 
 const CORS_HEADERS = {
@@ -177,13 +178,30 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       options: task.options,
     });
 
-    let persistentImageUrl;
-    if (result.imageBase64) {
-      const imageKey = `drawImage:${task.id}`;
-      await redis.set(imageKey, result.imageBase64, { ex: IMAGE_TTL_SECONDS });
-      persistentImageUrl = `/api/draw-image?id=${task.id}`;
-    } else {
-      persistentImageUrl = result.imageUrl || '';
+    let persistentImageUrl = result.imageUrl || '';
+
+    // 下载图片并上传到 Vercel Blob 持久化存储
+    if (persistentImageUrl && persistentImageUrl.startsWith('http')) {
+      try {
+        const imageResponse = await fetch(persistentImageUrl, {
+          signal: AbortSignal.timeout(30000),
+        });
+        if (imageResponse.ok) {
+          const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+          const contentType = imageResponse.headers.get('content-type') || 'image/png';
+          const ext = contentType.includes('webp') ? 'webp'
+            : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
+            : 'png';
+          const blob = await put(`draw/${task.id}.${ext}`, imageBuffer, {
+            access: 'public',
+            contentType,
+          });
+          persistentImageUrl = blob.url;
+        }
+      } catch (uploadError) {
+        // Blob 上传失败时回退到原始 URL（可能过期，但至少即时可见）
+        console.error('Vercel Blob upload failed:', uploadError.message || uploadError);
+      }
     }
 
     await setTask(redis, taskKey, {

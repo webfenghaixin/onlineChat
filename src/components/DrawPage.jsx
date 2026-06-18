@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { classNames, formatTime, formatDateTime, formatDuration, renderMarkdown } from '../lib/utils';
-import { DRAW_SIZE_OPTIONS, DRAW_QUALITY_OPTIONS, DRAW_API_MODE_OPTIONS } from '../lib/constants';
+import { DRAW_SIZE_OPTIONS, DRAW_QUALITY_OPTIONS, DRAW_API_MODE_OPTIONS, DRAW_MODEL_OPTIONS } from '../lib/constants';
 import { prepareDrawReferenceImage } from '../lib/image-utils';
 import ConfirmDialog from './ConfirmDialog';
 
@@ -226,7 +226,7 @@ export default function DrawPage({
                           <img className="draw-ref-image" src={msg.referenceImage} alt="参考图" />
                         )}
                         {msg.content}
-                        <span className="draw-msg-config">{DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
+                        <span className="draw-msg-config">{DRAW_MODEL_OPTIONS.find(o => o.value === msg.model)?.label || msg.model || 'GPT-Image'} · {DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
                       </div>
                       {!drawSelectMode && (
                         <div className={classNames('message-tools', 'message-tools-user')}>
@@ -421,6 +421,18 @@ export default function DrawPage({
                 </div>
               )}
               <div className="draw-config">
+                <label className="draw-config-item">
+                  <span>模型</span>
+                  <select
+                    className="draw-config-select"
+                    value={settings.drawModel || 'gpt-image'}
+                    onChange={(e) => setSettings((s) => ({ ...s, drawModel: e.target.value }))}
+                  >
+                    {DRAW_MODEL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </label>
                 <label className="draw-config-item">
                   <span>模式</span>
                   <select

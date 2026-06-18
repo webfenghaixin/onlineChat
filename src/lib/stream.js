@@ -650,7 +650,7 @@ async function generateImageViaTaskApi({
       referenceImage,
       size: size || '1024x1024',
       quality: quality || 'medium',
-      model: 'gpt-image-2',
+      model: settings.drawModel || 'gpt-image',
       taskMetadata,
     }),
     signal,
@@ -720,7 +720,7 @@ async function generateImageViaImagesApi({ url, headers, model, prompt, referenc
     image: referenceImage ? [referenceImage] : undefined,
     size: size || '1024x1024',
     quality: quality || 'medium',
-    response_format: 'b64_json',
+    response_format: 'url',
   });
 
   const response = await fetch(url, {
@@ -894,7 +894,7 @@ export async function generateImage({
 
   const url = resolveDrawProxyUrl(settings, apiMode);
   const headers = buildDrawHeaders(settings, apiMode);
-  const model = 'gpt-image-2';
+  const model = settings.drawModel || 'gpt-image';
 
   if (apiMode === 'chat') {
     return generateImageViaChatApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage });

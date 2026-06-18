@@ -50,10 +50,23 @@ onlineChat/
 │   ├── loading.png         # 加载图
 │   └── logo-2.png          # 主 Logo
 ├── src/                    # 前端源码
+│   ├── components/         # UI 组件（按功能拆分）
+│   │   ├── AuthForm.jsx    # 登录/注册表单
+│   │   ├── AuthLoading.jsx # 登录加载页
+│   │   ├── ChatHeader.jsx  # 聊天页头部（含选择模式）
+│   │   ├── Composer.jsx    # 聊天输入框（含选择操作栏）
+│   │   ├── ConfirmDialog.jsx # 确认弹窗（删除对话/图片）
+│   │   ├── DrawPage.jsx    # 画图页面（独立全屏，含侧边栏+消息列表+输入区）
+│   │   ├── Drawer.jsx      # 侧边抽屉（对话历史+接口设置）
+│   │   ├── MessageRow.jsx  # 聊天消息行（用户/AI，含复制/重试/选择）
+│   │   └── Scrollbar.jsx   # 自定义滚动条
 │   ├── lib/                # 前端工具库
 │   │   ├── auth.js         # 认证 API 调用（login/register/save/load）
-│   │   └── stream.js       # 流式聊天 + 画图核心逻辑
-│   ├── App.jsx             # 主应用组件（所有 UI 和状态）
+│   │   ├── constants.js    # 常量、选项配置、默认设置
+│   │   ├── image-utils.js  # 图片压缩处理（参考图预处理）
+│   │   ├── stream.js       # 流式聊天 + 画图核心逻辑
+│   │   └── utils.js        # 工具函数（markdown、时间格式化、状态管理、内容处理）
+│   ├── App.jsx             # 主应用组件（状态管理 + 组件组装）
 │   ├── main.jsx            # 入口文件
 │   └── styles.css          # 全局样式
 ├── .env.example            # 环境变量示例
@@ -72,13 +85,54 @@ onlineChat/
 
 ### 3.1 前端（src/）
 
-**App.jsx** — 单文件应用，包含全部 UI 和业务逻辑：
+**App.jsx** — 状态管理 + 组件组装，约 1350 行：
 
 - **认证流程**：`auth-form`（登录/注册）→ `loading`（同步云端数据）→ `authenticated`（主界面）
 - **聊天模式**：多对话管理，流式输出，支持图片上传，Markdown 渲染，消息选择/删除
 - **画图模式**：独立全屏页面，支持文生图/图生图，异步任务轮询，最多保留 20 张图
 - **状态持久化**：localStorage 即时保存 + 云端 8 秒防抖同步
 - **UI 特性**：自定义滚动条、虚拟键盘适配、移动端安全区适配、字体大小切换
+
+**src/components/** — UI 组件（按功能拆分）：
+
+| 组件 | 功能 |
+|------|------|
+| `AuthForm` | 登录/注册表单，含邀请码校验 |
+| `AuthLoading` | 登录加载页，同步云端数据动画 |
+| `ChatHeader` | 聊天页头部，含普通模式和选择模式 |
+| `Composer` | 聊天输入框，含图片上传、选择操作栏 |
+| `ConfirmDialog` | 通用确认弹窗（删除对话/图片） |
+| `DrawPage` | 画图页面，含侧边栏、消息列表、输入区、配置栏 |
+| `Drawer` | 侧边抽屉，含对话历史和接口设置两个标签页 |
+| `MessageRow` | 聊天消息行，支持复制/重试/选择 |
+| `Scrollbar` | 自定义滚动条，支持拖拽和点击定位 |
+
+**src/lib/constants.js** — 常量与选项配置：
+
+| 导出 | 功能 |
+|------|------|
+| `STORAGE_KEY` / `VITE_INVITE_CODE` / `MAX_COMPOSER_HEIGHT` 等常量 | 全局常量 |
+| `FONT_SIZE_OPTIONS` / `MODEL_OPTIONS` / `DRAW_SIZE_OPTIONS` 等 | 下拉选项配置 |
+| `defaultSettings` | 默认设置对象 |
+
+**src/lib/utils.js** — 通用工具函数：
+
+| 函数 | 功能 |
+|------|------|
+| `renderMarkdown()` | Markdown 渲染（带 LRU 缓存） |
+| `normalizeModelSettings()` | 模型设置规范化（Gemini 自动切换） |
+| `getTextParts()` / `getImageParts()` / `createTextContent()` | 消息内容解析与构建 |
+| `createConversation()` / `createDrawConversation()` | 创建新对话 |
+| `normalizeState()` / `loadState()` / `saveState()` | 状态持久化 |
+| `formatTime()` / `formatDateTime()` / `formatDuration()` | 时间格式化 |
+| `buildConversationTitle()` / `buildCopyText()` | 标题和复制文本生成 |
+| `classNames()` | CSS 类名拼接 |
+
+**src/lib/image-utils.js** — 图片处理：
+
+| 函数 | 功能 |
+|------|------|
+| `prepareDrawReferenceImage()` | 参考图压缩（最大 1536px / 1.5MB） |
 
 **src/lib/auth.js** — 认证与数据同步：
 
@@ -233,7 +287,7 @@ onlineChat/
 
 | 变量名 | 用途 | 使用位置 |
 |--------|------|----------|
-| `VITE_INVITE_CODE` | 前端注册邀请码校验 | 前端 App.jsx |
+| `VITE_INVITE_CODE` | 前端注册邀请码校验 | 前端 src/lib/constants.js |
 | `VITE_API_TARGET` | 本地开发代理目标地址 | vite.config.js |
 | `API_KEY_LUXEE` | Luxee API 密钥 | api/proxy.js, api/draw.js, api/draw-task/start.js |
 | `API_KEY_RIGHTCODE` | RightCode API 密钥 | 同上 |
@@ -246,7 +300,7 @@ onlineChat/
 
 ## 6. 关键设计决策
 
-1. **单文件前端**：App.jsx 约 2800 行，所有 UI 和状态集中管理，无路由库
+1. **组件化前端**：App.jsx 约 1350 行（状态管理 + 组件组装），UI 按功能拆分到 src/components/，工具函数拆分到 src/lib/
 2. **双模式画图**：代理模式走异步任务 API（start → poll），直连模式走 Images/Chat API
 3. **画图图片存储**：base64 存 Redis（30 天 TTL），通过 `/api/draw-image?id=` 返回二进制
 4. **画图限制**：最多保留 20 张图，超出自动替换最早的

@@ -226,7 +226,7 @@ export default function DrawPage({
                           <img className="draw-ref-image" src={msg.referenceImage} alt="参考图" />
                         )}
                         {msg.content}
-                        <span className="draw-msg-config">{DRAW_MODEL_OPTIONS.find(o => o.value === msg.model)?.label || msg.model || 'GPT-Image'} · {DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
+                        <span className="draw-msg-config">{DRAW_MODEL_OPTIONS.find(o => o.value === msg.model)?.label || msg.model || 'GPT-Image-2'} · {DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
                       </div>
                       {!drawSelectMode && (
                         <div className={classNames('message-tools', 'message-tools-user')}>
@@ -425,7 +425,7 @@ export default function DrawPage({
                   <span>模型</span>
                   <select
                     className="draw-config-select"
-                    value={settings.drawModel || 'gpt-image'}
+                    value={settings.drawModel || 'gpt-image-2'}
                     onChange={(e) => setSettings((s) => ({ ...s, drawModel: e.target.value }))}
                   >
                     {DRAW_MODEL_OPTIONS.map((opt) => (

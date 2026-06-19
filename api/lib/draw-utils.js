@@ -17,7 +17,7 @@ export function cleanDrawOptions(options = {}) {
     referenceImage: typeof options.referenceImage === 'string' ? options.referenceImage : '',
     size: options.size || '1024x1024',
     quality: options.quality || 'medium',
-    model: options.model || 'gpt-image',
+    model: options.model || 'gpt-image-2',
   };
 }
 

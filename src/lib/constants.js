@@ -31,7 +31,7 @@ export const MODEL_OPTIONS = [
 ];
 
 export const DRAW_MODEL_OPTIONS = [
-  { value: 'gpt-image', label: 'GPT-Image' },
+  { value: 'gpt-image-2', label: 'GPT-Image-2' },
   { value: 'gpt-image-2-vip', label: 'GPT-Image-2-VIP' },
 ];
 
@@ -84,6 +84,6 @@ export const defaultSettings = {
   fontSize: 'lg',
   drawSize: '1024x1024',
   drawQuality: 'medium',
-  drawModel: 'gpt-image',
+  drawModel: 'gpt-image-2',
   drawApiMode: 'images',
 };

@@ -4,7 +4,6 @@ export const config = {
 
 import { createRedis, getRedisJson, setRedisJson, verifyJWT } from '../lib/auth-utils.js';
 import { cleanDrawOptions, runDrawRequest } from '../lib/draw-utils.js';
-import { put } from '@vercel/blob';
 import { waitUntil } from '@vercel/functions';
 
 const CORS_HEADERS = {
@@ -192,6 +191,7 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
           const ext = contentType.includes('webp') ? 'webp'
             : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
             : 'png';
+          const { put } = await import('@vercel/blob');
           const blob = await put(`draw/${task.id}.${ext}`, imageBuffer, {
             access: 'public',
             contentType,

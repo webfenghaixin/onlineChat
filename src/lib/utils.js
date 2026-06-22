@@ -79,7 +79,7 @@ export function createTextContent(text) {
   ];
 }
 
-function createId() {
+export function createId() {
   if (typeof crypto !== 'undefined') {
     if (typeof crypto.randomUUID === 'function') {
       return crypto.randomUUID();
@@ -133,7 +133,11 @@ export function createDrawConversation() {
 function normalizeMessage(message, fallbackTimestamp) {
   const rawContent = Array.isArray(message?.content)
     ? message.content
-    : createTextContent(typeof message?.content === 'string' ? message.content : '');
+    : typeof message?.content === 'string'
+      ? createTextContent(message.content)
+      : message?.content && typeof message.content === 'object' && message.content.type === 'text'
+        ? createTextContent(message.content.text || '')
+        : createTextContent('');
 
   return {
     ...message,

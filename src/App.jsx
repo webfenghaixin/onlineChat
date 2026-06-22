@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { streamChatCompletion, generateImage, pollDrawTask } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername } from './lib/auth';
+import { DRAW_MAX_IMAGES } from './lib/constants';
 import {
   classNames,
   loadState,
@@ -10,6 +11,7 @@ import {
   getTextParts,
   getImageParts,
   createTextContent,
+  createId,
   createConversation,
   createDrawConversation,
   buildConversationTitle,
@@ -642,7 +644,7 @@ export default function App() {
     }
 
     // Check limit
-    if (drawImageCount >= 20) {
+    if (drawImageCount >= DRAW_MAX_IMAGES) {
       setDrawLimitWarning(true);
     }
 
@@ -661,7 +663,7 @@ export default function App() {
 
     const now = Date.now();
     const userMessage = {
-      id: crypto.randomUUID(),
+      id: createId(),
       role: 'user',
       content: prompt,
       referenceImage: drawPendingImage?.url || null,
@@ -672,7 +674,7 @@ export default function App() {
     };
 
     const assistantMessage = {
-      id: crypto.randomUUID(),
+      id: createId(),
       role: 'assistant',
       imageUrl: null,
       prompt,
@@ -890,14 +892,14 @@ export default function App() {
 
     const now = Date.now();
     const userMessage = {
-      id: crypto.randomUUID(),
+      id: createId(),
       role: 'user',
       content,
       createdAt: now,
     };
 
     const assistantMessage = {
-      id: crypto.randomUUID(),
+      id: createId(),
       role: 'assistant',
       content: createTextContent(''),
       createdAt: now,
@@ -1379,6 +1381,7 @@ export default function App() {
           cancelDeleteDrawMessage={cancelDeleteDrawMessage}
           confirmDeleteDrawMessage={confirmDeleteDrawMessage}
           exitDrawSelectMode={exitDrawSelectMode}
+          enterDrawSelectMode={enterDrawSelectMode}
           toggleDrawMessageSelection={toggleDrawMessageSelection}
           selectAllDrawUserMessages={selectAllDrawUserMessages}
           selectAllDrawAssistantMessages={selectAllDrawAssistantMessages}

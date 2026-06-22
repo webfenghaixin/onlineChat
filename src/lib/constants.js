@@ -5,6 +5,7 @@ export const GEMINI_MODEL_ID = 'gemini-3.1-pro';
 export const DRAW_REFERENCE_MAX_DIMENSION = 1536;
 export const DRAW_REFERENCE_MAX_BYTES = 1.5 * 1024 * 1024;
 export const DRAW_REFERENCE_MIN_QUALITY = 0.55;
+export const DRAW_MAX_IMAGES = 100;
 
 export const FONT_SIZE_OPTIONS = [
   { value: 'md', label: '标准' },

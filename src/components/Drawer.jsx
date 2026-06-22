@@ -1,4 +1,4 @@
-import { Button, Card, Input, Select } from 'animal-island-ui';
+import { Button, Card, Input, Select, Divider } from 'animal-island-ui';
 import { FONT_SIZE_OPTIONS, MODEL_OPTIONS } from '../lib/constants';
 import { formatDateTime, normalizeModelSettings } from '../lib/utils';
 
@@ -31,7 +31,6 @@ export default function Drawer({
           </div>
           <Button className="drawer-close-button" type="text" size="small" onClick={() => setDrawerOpen(false)}>关闭</Button>
         </div>
-
         <div className="drawer-mode-shell" role="tablist" aria-label="对话与设置切换">
           <button
             type="button"
@@ -42,7 +41,6 @@ export default function Drawer({
           >
             <span className="drawer-mode-title">对话</span>
           </button>
-
           <button
             type="button"
             role="tab"
@@ -56,6 +54,7 @@ export default function Drawer({
 
         {drawerTab === 'history' ? (
           <div className="history-pane">
+            <Divider type="wave-yellow" />
             <Button className="drawer-primary-action" type="primary" block onClick={createNewConversation}>
               新建对话
             </Button>

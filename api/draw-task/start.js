@@ -177,30 +177,42 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       options: task.options,
     });
 
-    let persistentImageUrl = result.imageUrl || '';
+    const sourceImageUrl = result.imageUrl || '';
+    let persistentImageUrl = sourceImageUrl;
+    let blobUrl = '';
+    let blobUploadError = '';
 
-    // 下载图片并上传到 Vercel Blob 持久化存储
-    if (persistentImageUrl && persistentImageUrl.startsWith('http')) {
+    if (sourceImageUrl && sourceImageUrl.startsWith('http')) {
       try {
-        const imageResponse = await fetch(persistentImageUrl, {
+        const token = process.env.BLOB_READ_WRITE_TOKEN || '';
+        if (!token) {
+          throw new Error('服务端未配置 BLOB_READ_WRITE_TOKEN');
+        }
+
+        const imageResponse = await fetch(sourceImageUrl, {
           signal: AbortSignal.timeout(30000),
         });
-        if (imageResponse.ok) {
-          const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-          const contentType = imageResponse.headers.get('content-type') || 'image/png';
-          const ext = contentType.includes('webp') ? 'webp'
-            : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
-            : 'png';
-          const { put } = await import('@vercel/blob');
-          const blob = await put(`draw/${task.id}.${ext}`, imageBuffer, {
-            access: 'public',
-            contentType,
-          });
-          persistentImageUrl = blob.url;
+        if (!imageResponse.ok) {
+          throw new Error(`下载源图片失败 (${imageResponse.status})`);
         }
+
+        const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+        const contentType = imageResponse.headers.get('content-type') || 'image/png';
+        const ext = contentType.includes('webp') ? 'webp'
+          : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
+          : 'png';
+        const { put } = await import('@vercel/blob');
+        const blob = await put(`draw/${task.id}.${ext}`, imageBuffer, {
+          access: 'public',
+          contentType,
+          token,
+          addRandomSuffix: false,
+        });
+        blobUrl = blob.url;
+        persistentImageUrl = blob.url;
       } catch (uploadError) {
-        // Blob 上传失败时回退到原始 URL（可能过期，但至少即时可见）
-        console.error('Vercel Blob upload failed:', uploadError.message || uploadError);
+        blobUploadError = uploadError instanceof Error ? uploadError.message : String(uploadError);
+        console.error('Vercel Blob upload failed:', blobUploadError);
       }
     }
 
@@ -208,11 +220,17 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       ...runningTask,
       status: 'succeeded',
       imageUrl: persistentImageUrl,
+      sourceImageUrl,
+      blobUrl,
+      blobUploadError,
       updatedAt: Date.now(),
       completedAt: Date.now(),
     });
     await upsertDrawTaskRecord(redis, task.owner, task.metadata, {
       imageUrl: persistentImageUrl,
+      sourceImageUrl,
+      blobUrl,
+      blobUploadError,
       error: undefined,
     });
   } catch (error) {

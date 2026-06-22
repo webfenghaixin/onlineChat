@@ -2140,104 +2140,141 @@ button:disabled {
 
 /* 平板+桌面通用 (>=561px) */
 @media (min-width: 561px) {
-  /* chat-app 容器：去掉居中留白，让内容自然展开 */
-  .chat-app {
-    padding: 0;
+  .pc-only {
+    display: block;
+  }
+
+  .chat-app,
+  .draw-page {
+    padding: 24px;
     background:
+      radial-gradient(circle at top left, rgba(129, 220, 210, 0.22), transparent 28%),
+      radial-gradient(circle at top right, rgba(216, 130, 57, 0.12), transparent 24%),
       linear-gradient(180deg, #eef6f4 0%, #e8f2ee 50%, #e5f0ec 100%);
   }
 
-  /* phone-shell：去掉手机壳效果，变为桌面级面板 */
   .phone-shell {
-    max-width: 1200px;
+    width: min(100%, 1100px);
+    max-width: 1100px;
+    height: 100%;
     margin: 0 auto;
-    border-radius: 16px;
+    border-radius: 24px;
     border: 1px solid rgba(17, 97, 92, 0.08);
     box-shadow:
-      0 2px 12px rgba(24,44,48,0.05),
-      0 8px 32px rgba(17,61,58,0.04);
+      0 10px 36px rgba(24,44,48,0.08),
+      0 28px 68px rgba(17,61,58,0.06);
     background:
       linear-gradient(180deg, rgba(255,255,252,0.98) 0%, rgba(250,252,249,0.96) 100%);
-  }
-
-  /* Header */
-  .chat-header {
-    padding-left: 18px;
-    padding-right: 18px;
-    min-height: calc(60px + env(safe-area-inset-top));
-  }
-
-  .chat-title h1 {
-    font-size: var(--font-title);
-    max-width: none;
-  }
-
-  .chat-title p {
-    max-width: none;
-  }
-
-  /* 消息列表 */
-  .message-list {
-    padding: 20px 20px 32px;
-  }
-
-  .message-bubble {
-    max-width: 80%;
-  }
-
-  .message-assistant .message-bubble {
-    max-width: 70%;
-  }
-
-  /* Composer */
-  .composer-panel {
-    padding: 12px 18px calc(14px + env(safe-area-inset-bottom));
-  }
-
-  /* Drawer */
-  .drawer {
-    width: min(360px, 32vw);
-  }
-
-  /* 登录页：桌面端也居中显示，但不要手机壳感 */
-  .gate-shell {
-    background-color: #eef6f4;
-    background-image: url('/h5-bg-top.png'), url('/h5-bg-bottom.png');
-    background-repeat: no-repeat, no-repeat;
-    background-position: top center, bottom center;
-    background-size: 100% auto, 100% auto;
-  }
-}
-
-/* 大屏桌面 (>=1024px): 更宽敞 */
-@media (min-width: 1024px) {
-  .phone-shell {
-    max-width: 1200px;
-    border-radius: 18px;
-  }
-
-  .message-list {
-    padding: 24px 24px 36px;
-  }
-
-  .composer-panel {
-    padding: 14px 22px calc(16px + env(safe-area-inset-bottom));
   }
 
   .chat-header {
     padding-left: 22px;
     padding-right: 22px;
+    min-height: calc(64px + env(safe-area-inset-top));
+  }
+
+  .chat-title h1 {
+    font-size: var(--font-title);
+    max-width: min(48vw, 520px);
+  }
+
+  .chat-title p {
+    max-width: min(40vw, 360px);
+  }
+
+  .message-list {
+    padding: 24px 26px 36px;
+  }
+
+  .message-list-wrapper {
+    padding: 0 4px;
+  }
+
+  .message-bubble {
+    max-width: min(80%, 760px);
+  }
+
+  .message-assistant .message-bubble {
+    max-width: min(72%, 820px);
+  }
+
+  .composer-panel {
+    padding: 14px 22px calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .scroll-to-bottom-button {
+    right: 28px;
+    bottom: calc(22px + var(--keyboard-offset, 0px));
+  }
+
+  .drawer {
+    width: min(360px, 32vw);
+  }
+
+  .gate-shell {
+    padding: 32px;
+    background:
+      radial-gradient(circle at 18% 18%, rgba(84, 201, 191, 0.18), transparent 22%),
+      radial-gradient(circle at 82% 22%, rgba(216, 130, 57, 0.14), transparent 18%),
+      linear-gradient(145deg, #edf8f5 0%, #eef4fb 45%, #fff8f0 100%);
+  }
+
+  .gate-card {
+    width: min(100%, 460px);
+    padding: 40px 34px;
+    border-radius: 32px;
+    box-shadow:
+      0 12px 36px rgba(24,44,48,0.08),
+      0 28px 72px rgba(17,61,58,0.08);
+  }
+}
+
+/* 大屏桌面 (>=1024px): 更宽敞 */
+@media (min-width: 1024px) {
+  .chat-app,
+  .draw-page {
+    padding: 32px;
+  }
+
+  .phone-shell {
+    max-width: 1180px;
+    border-radius: 28px;
+  }
+
+  .message-list {
+    padding: 28px 30px 40px;
+  }
+
+  .composer-panel {
+    padding: 16px 26px calc(20px + env(safe-area-inset-bottom));
+  }
+
+  .chat-header {
+    padding-left: 26px;
+    padding-right: 26px;
   }
 
   .drawer {
     width: min(380px, 34vw);
+  }
+
+  .gate-shell {
+    padding: 40px;
+  }
+
+  .gate-card {
+    width: min(100%, 500px);
   }
 }
 
 /* 超大屏 (>=1400px): 不再放大，保持舒适阅读宽度 */
 @media (min-width: 1400px) {
   .phone-shell {
-    max-width: 1200px;
+    max-width: 1180px;
+  }
+
+  .gate-card {
+    width: min(100%, 520px);
   }
 }
 

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { classNames, formatTime, formatDateTime, formatDuration, renderMarkdown } from '../lib/utils';
 import { DRAW_SIZE_OPTIONS, DRAW_QUALITY_OPTIONS, DRAW_API_MODE_OPTIONS, DRAW_MODEL_OPTIONS } from '../lib/constants';
 import { prepareDrawReferenceImage } from '../lib/image-utils';
 import ConfirmDialog from './ConfirmDialog';
+import Scrollbar from './Scrollbar';
 
 export default function DrawPage({
   settings,
@@ -50,6 +51,46 @@ export default function DrawPage({
   authState,
 }) {
   const [copiedId, setCopiedId] = useState(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const messageListRef = useRef(null);
+  const programmaticScrollRef = useRef(false);
+
+  const checkIsAtBottom = useCallback(() => {
+    const el = messageListRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    setShowScrollToBottom(false);
+    window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      setShowScrollToBottom(!checkIsAtBottom());
+    }, 500);
+  }, [checkIsAtBottom]);
+
+  useEffect(() => {
+    const el = messageListRef.current;
+    if (!el) return undefined;
+    const onScroll = () => {
+      if (programmaticScrollRef.current) return;
+      setShowScrollToBottom(!checkIsAtBottom());
+    };
+    onScroll();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [checkIsAtBottom, activeDrawConversationId]);
+
+  useEffect(() => {
+    const rafId = requestAnimationFrame(() => {
+      setShowScrollToBottom(!checkIsAtBottom());
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [activeDrawMessages, isGenerating, checkIsAtBottom]);
 
   async function handleCopy(msg) {
     try {
@@ -178,7 +219,7 @@ export default function DrawPage({
         </header>
 
         <div className="message-list-wrapper">
-          <section className="message-list" aria-live="polite">
+          <section className="message-list" ref={messageListRef} aria-live="polite">
             {drawLimitWarning && (
               <div className="draw-limit-banner">
                 已存满 20 张图，新图片将自动替换最早的图片
@@ -380,6 +421,17 @@ export default function DrawPage({
               return null;
             })}
           </section>
+          <Scrollbar scrollRef={messageListRef} />
+          {showScrollToBottom && (
+            <button
+              type="button"
+              className="scroll-to-bottom-button"
+              onClick={scrollToBottom}
+              aria-label="滚动到底部"
+            >
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 12 10 17 15 12" /><line x1="10" y1="3" x2="10" y2="17" /></svg>
+            </button>
+          )}
         </div>
 
         <footer className="composer-panel">

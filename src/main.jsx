@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import 'animal-island-ui/style';
 import App from './App';
 import './styles.css';
 

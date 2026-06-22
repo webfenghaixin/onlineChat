@@ -26,6 +26,7 @@ import Scrollbar from './components/Scrollbar';
 import Composer from './components/Composer';
 import DrawPage from './components/DrawPage';
 import ConfirmDialog from './components/ConfirmDialog';
+import { Button, Card, Divider, Footer, Title } from 'animal-island-ui';
 
 export default function App() {
   const loadedState = useMemo(() => loadState(), []);
@@ -43,6 +44,7 @@ export default function App() {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [showCompleteHint, setShowCompleteHint] = useState(false);
   const [authState, setAuthState] = useState(() => (getToken() ? 'loading' : 'auth-form'));
+  const [authLoadingActive, setAuthLoadingActive] = useState(true);
   const [authTab, setAuthTab] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', inviteCode: '' });
   const [authError, setAuthError] = useState('');
@@ -192,6 +194,8 @@ export default function App() {
   useEffect(() => {
     if (authState !== 'loading') return;
     let cancelled = false;
+    let settleTimer = null;
+    setAuthLoadingActive(true);
     loadFromCloud()
       .then((data) => {
         if (cancelled) return;
@@ -203,14 +207,25 @@ export default function App() {
           setDrawConversations(normalized.drawConversations);
           setActiveDrawConversationId(normalized.activeDrawConversationId);
         }
-        setAuthState('authenticated');
+        setAuthLoadingActive(false);
+        settleTimer = window.setTimeout(() => {
+          if (cancelled) return;
+          setAuthState('authenticated');
+        }, 900);
       })
       .catch(() => {
         if (cancelled) return;
         clearToken();
-        setAuthState('auth-form');
+        setAuthLoadingActive(false);
+        settleTimer = window.setTimeout(() => {
+          if (cancelled) return;
+          setAuthState('auth-form');
+        }, 900);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (settleTimer) window.clearTimeout(settleTimer);
+    };
   }, [authState]);
 
   useEffect(() => {
@@ -1163,10 +1178,6 @@ export default function App() {
     setPendingImage(null);
   }
 
-  if (authState === 'loading') {
-    return <AuthLoading />;
-  }
-
   if (authState === 'auth-form') {
     return (
       <AuthForm
@@ -1179,6 +1190,7 @@ export default function App() {
         authLoading={authLoading}
         setAuthLoading={setAuthLoading}
         setAuthState={setAuthState}
+        setAuthLoadingActive={setAuthLoadingActive}
         setCurrentUser={setCurrentUser}
       />
     );
@@ -1186,6 +1198,12 @@ export default function App() {
 
   return (
     <div className={classNames('chat-app', `font-scale-${settings.fontSize || 'md'}`)}>
+      <div className="scene-glow scene-glow-left" aria-hidden="true" />
+      <div className="scene-glow scene-glow-right" aria-hidden="true" />
+      <div className="scene-hills" aria-hidden="true" />
+      <Footer type="tree" className="scene-footer scene-footer-tree pc-only" />
+      <Footer type="sea" seamless className="scene-footer scene-footer-sea pc-only" />
+
       <Drawer
         drawerOpen={drawerOpen}
         setDrawerOpen={setDrawerOpen}
@@ -1210,7 +1228,7 @@ export default function App() {
         onConfirm={() => { removeConversation(deleteConversationTarget); setDeleteConversationTarget(null); }}
       />
 
-      <main className="phone-shell">
+      <main className="phone-shell chat-shell">
         <ChatHeader
           selectMode={selectMode}
           selectedMessageIds={selectedMessageIds}
@@ -1229,13 +1247,37 @@ export default function App() {
           <section className="message-list" ref={messageListRef} aria-live="polite">
             {hasMoreMessages && (
               <div className="load-more-bar">
-                <button
-                  type="button"
-                  className="load-more-button"
+                <Button
+                  type="dashed"
+                  size="small"
                   onClick={() => setVisibleMessageCount((c) => c + 50)}
                 >
                   加载更早消息（还有 {activeMessages.length - visibleMessageCount} 条）
-                </button>
+                </Button>
+              </div>
+            )}
+            {visibleMessages.length === 0 && !isSending && (
+              <div className="empty-state">
+                <Card className="welcome-panel" type="dashed" pattern="default">
+                  <div className="welcome-label">岛上广播</div>
+                  <Title size="large" color="app-yellow">开始一段新对话</Title>
+                  <p>在下方输入你的问题，或者先点一个常用方向，让这次对话更快进入状态。</p>
+                  <Divider type="wave-yellow" className="welcome-divider" />
+                  <div className="suggestions">
+                    <button type="button" onClick={() => quickFill('帮我把这段中文文案润色得更自然、更口语一些')}>
+                      润色文案
+                    </button>
+                    <button type="button" onClick={() => quickFill('帮我整理一个本周工作计划，按优先级和时间块输出')}>
+                      整理计划
+                    </button>
+                    <button type="button" onClick={() => quickFill('请把这段内容总结成 5 条重点，并补充一个执行建议')}>
+                      总结重点
+                    </button>
+                    <button type="button" onClick={() => quickFill('我想做一个 H5 页面，请先帮我梳理结构、文案和视觉方向')}>
+                      页面策划
+                    </button>
+                  </div>
+                </Card>
               </div>
             )}
             {visibleMessages.map((message) => (
@@ -1261,14 +1303,16 @@ export default function App() {
           </section>
           <Scrollbar scrollRef={messageListRef} />
           {showScrollToBottom && (
-            <button
-              type="button"
+            <Button
+              type="default"
+              size="small"
               className="scroll-to-bottom-button"
               onClick={scrollToBottom}
               aria-label="滚动到底部"
-            >
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 12 10 17 15 12" /><line x1="10" y1="3" x2="10" y2="17" /></svg>
-            </button>
+              icon={
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 12 10 17 15 12" /><line x1="10" y1="3" x2="10" y2="17" /></svg>
+              }
+            />
           )}
         </div>
 
@@ -1343,6 +1387,8 @@ export default function App() {
           authState={authState}
         />
       )}
+
+      {authState === 'loading' && <AuthLoading active={authLoadingActive} />}
     </div>
   );
 }

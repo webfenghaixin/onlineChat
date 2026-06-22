@@ -79,17 +79,41 @@ export function createTextContent(text) {
   ];
 }
 
+function createId() {
+  if (typeof crypto !== 'undefined') {
+    if (typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+
+    if (typeof crypto.getRandomValues === 'function') {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+      return [
+        hex.slice(0, 4).join(''),
+        hex.slice(4, 6).join(''),
+        hex.slice(6, 8).join(''),
+        hex.slice(8, 10).join(''),
+        hex.slice(10, 16).join(''),
+      ].join('-');
+    }
+  }
+
+  return `id-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+}
+
 export function createConversation() {
   const now = Date.now();
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     title: '新的对话',
     updatedAt: now,
     messages: [
       {
-        id: crypto.randomUUID(),
+        id: createId(),
         role: 'assistant',
-        content: createTextContent('你好，直接把问题发给我就行。我会尽量用清楚、好读的方式回答。'),
+        content: createTextContent('你好，直接把问题发给我就行。我会尽量用清晰、好读的方式回答。'),
         createdAt: now,
       },
     ],
@@ -99,7 +123,7 @@ export function createConversation() {
 export function createDrawConversation() {
   const now = Date.now();
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     title: '新的画图',
     updatedAt: now,
     messages: [],
@@ -113,6 +137,7 @@ function normalizeMessage(message, fallbackTimestamp) {
 
   return {
     ...message,
+    id: message?.id || createId(),
     content: rawContent,
     createdAt: message?.createdAt || fallbackTimestamp || Date.now(),
   };
@@ -124,6 +149,7 @@ export function normalizeState(parsed) {
     Array.isArray(parsed?.conversations) && parsed.conversations.length
       ? parsed.conversations.map((conversation) => ({
           ...conversation,
+          id: conversation?.id || createId(),
           messages: (conversation.messages || []).map((message) =>
             normalizeMessage(message, conversation.updatedAt),
           ),
@@ -132,7 +158,13 @@ export function normalizeState(parsed) {
 
   const drawConversations =
     Array.isArray(parsed?.drawConversations) && parsed.drawConversations.length
-      ? parsed.drawConversations
+      ? parsed.drawConversations.map((conversation) => ({
+          ...conversation,
+          id: conversation?.id || createId(),
+          messages: (conversation.messages || []).map((message) =>
+            normalizeMessage(message, conversation.updatedAt),
+          ),
+        }))
       : [];
 
   return {
@@ -162,20 +194,23 @@ export function loadState() {
 
 export function saveState(state) {
   try {
-    // 过滤掉画图消息中的 referenceImage（base64 数据过大，且仅临时使用）
-    const cleanedDrawConversations = state.drawConversations.map((conv) => ({
-      ...conv,
-      messages: conv.messages.map((msg) => {
-        if (msg.referenceImage) {
-          const { referenceImage, ...rest } = msg;
+    const cleanedDrawConversations = state.drawConversations.map((conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map((message) => {
+        if (message.referenceImage) {
+          const { referenceImage, ...rest } = message;
           return rest;
         }
-        return msg;
+        return message;
       }),
     }));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, drawConversations: cleanedDrawConversations }));
+
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ ...state, drawConversations: cleanedDrawConversations }),
+    );
   } catch {
-    // localStorage 可能已满，忽略写入错误
+    // localStorage may be full or unavailable in some embedded browsers.
   }
 }
 

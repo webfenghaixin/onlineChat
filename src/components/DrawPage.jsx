@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button, Card, Select, Input } from 'animal-island-ui';
 import { classNames, formatTime, formatDateTime, formatDuration, renderMarkdown } from '../lib/utils';
 import { DRAW_SIZE_OPTIONS, DRAW_QUALITY_OPTIONS, DRAW_API_MODE_OPTIONS, DRAW_MODEL_OPTIONS } from '../lib/constants';
 import { prepareDrawReferenceImage } from '../lib/image-utils';
@@ -109,33 +110,30 @@ export default function DrawPage({
       <aside className={classNames('drawer', drawDrawerOpen && 'drawer-open')}>
         <div className="drawer-header">
           <div className="drawer-brand">
-            <img className="drawer-logo" src="/logo-2.png" alt="" />
             <div>
-              <div className="drawer-kicker">lightDraw</div>
               <div className="drawer-title">画图记录</div>
             </div>
           </div>
-          <button className="plain-icon-button" type="button" onClick={() => setDrawDrawerOpen(false)}>
-            关闭
-          </button>
+          <Button className="drawer-close-button" type="text" size="small" onClick={() => setDrawDrawerOpen(false)}>关闭</Button>
         </div>
 
         <div className="history-pane">
-          <button className="primary-button wide-button" type="button" onClick={createNewDrawConversation}>
+          <Button className="drawer-primary-action" type="primary" block onClick={createNewDrawConversation}>
             新建画图
-          </button>
+          </Button>
 
           <div className="history-list">
             {drawConversations
               .slice()
               .sort((a, b) => b.updatedAt - a.updatedAt)
               .map((conv) => (
-                <div
+                <Card
                   key={conv.id}
                   className={classNames(
                     'history-card',
                     conv.id === activeDrawConversationId && 'history-card-active',
                   )}
+                  color={conv.id === activeDrawConversationId ? 'app-teal' : 'default'}
                 >
                   <button
                     className="history-main"
@@ -152,15 +150,16 @@ export default function DrawPage({
                       {conv.messages.filter((m) => m.imageUrl).length} 张图 · {formatDateTime(conv.updatedAt)}
                     </span>
                   </button>
-                  <button
+                  <Button
                     className="history-delete"
-                    type="button"
-                    aria-label="删除画图记录"
+                    type="text"
+                    size="small"
+                    danger
                     onClick={() => setDeleteDrawConversationTarget(conv.id)}
                   >
                     删除
-                  </button>
-                </div>
+                  </Button>
+                </Card>
               ))}
           </div>
         </div>
@@ -180,40 +179,39 @@ export default function DrawPage({
         <header className={classNames('chat-header', drawSelectMode ? 'chat-header-select' : 'chat-header-3col')}>
           {drawSelectMode ? (
             <>
-              <button className="header-button header-button-text" type="button" onClick={exitDrawSelectMode}>
-                取消
-              </button>
+              <Button className="select-header-button" type="text" size="small" onClick={exitDrawSelectMode}>取消</Button>
               <div className="chat-title">
                 <h1>已选 {drawSelectedMessageIds.size} 条</h1>
               </div>
-              <button
-                className="header-button header-button-icon"
-                type="button"
+              <Button
+                className="select-header-button"
+                type="primary"
+                danger
+                size="small"
                 onClick={deleteSelectedDrawMessages}
                 disabled={drawSelectedMessageIds.size === 0}
                 aria-label="删除"
               >
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg>
-              </button>
+                删除
+              </Button>
             </>
           ) : (
             <>
-              <button className="header-button header-button-icon" type="button" onClick={() => setDrawDrawerOpen(true)}>
-                <span aria-hidden="true">☰</span>
-              </button>
+              <Button className="mobile-header-button mobile-header-button-menu" type="default" size="small" onClick={() => setDrawDrawerOpen(true)} aria-label="打开侧栏">
+                ☰
+              </Button>
 
               <div className="chat-title">
-                <img className="header-logo" src="/logo-2.png" alt="" />
                 <h1>{activeDrawConversation?.title || 'AI 画图'}</h1>
-                <p>
+                <p className="chat-title-status">
                   <span className={classNames('status-dot', isGenerating && 'status-dot-live')} />
                   {isGenerating ? `生成中 ${formatDuration(drawElapsedSeconds)}` : `已存 ${drawImageCount}/20 张`}
                 </p>
               </div>
 
-              <button className="header-button header-button-icon" type="button" onClick={closeDrawMode} aria-label="返回聊天">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              </button>
+              <Button className="mobile-header-button draw-back-button" type="default" size="small" onClick={closeDrawMode} aria-label="返回聊天">
+                返回
+              </Button>
             </>
           )}
         </header>
@@ -223,15 +221,17 @@ export default function DrawPage({
             {drawLimitWarning && (
               <div className="draw-limit-banner">
                 已存满 20 张图，新图片将自动替换最早的图片
-                <button type="button" onClick={() => setDrawLimitWarning(false)}>知道了</button>
+                <Button type="text" size="small" onClick={() => setDrawLimitWarning(false)}>知道了</Button>
               </div>
             )}
             {errorText && <div className="error-banner">{errorText}</div>}
 
             {activeDrawConversation?.messages.length === 0 && !isGenerating && (
               <div className="draw-empty">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
-                <p>输入描述，AI 为你生成图片</p>
+                <Card className="draw-empty-card" type="dashed" color="app-yellow">
+                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+                  <p>输入描述，AI 为你生成图片</p>
+                </Card>
               </div>
             )}
 
@@ -269,20 +269,17 @@ export default function DrawPage({
                         {msg.content}
                         <span className="draw-msg-config">{DRAW_MODEL_OPTIONS.find(o => o.value === msg.model)?.label || msg.model || 'GPT-Image-2'} · {DRAW_SIZE_OPTIONS.find(o => o.value === msg.size)?.label} · {DRAW_QUALITY_OPTIONS.find(o => o.value === msg.quality)?.label}{msg.referenceImage ? ' · 图生图' : ''}</span>
                       </div>
-                      {!drawSelectMode && (
-                        <div className={classNames('message-tools', 'message-tools-user')}>
-                          <button
-                            type="button"
-                            className={classNames('tool-button tool-button-icon', copiedId === msg.id && 'tool-button-copied')}
-                            onClick={() => handleCopy(msg)}
+                        {!drawSelectMode && (
+                          <div className={classNames('message-tools', 'message-tools-user')}>
+                            <Button
+                              className="tool-button tool-button-user"
+                              type="text"
+                              size="small"
+                              onClick={() => handleCopy(msg)}
                             aria-label="复制"
                           >
-                            {copiedId === msg.id ? (
-                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3.5 8.5 6.5 11.5 12.5 4.5" /></svg>
-                            ) : (
-                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V3.5a1.5 1.5 0 0 0-1.5-1.5H3.5A1.5 1.5 0 0 0 2 3.5V9a1.5 1.5 0 0 0 1.5 1.5h2" /></svg>
-                            )}
-                          </button>
+                            {copiedId === msg.id ? '已复制' : '复制'}
+                          </Button>
                         </div>
                       )}
                     </div>
@@ -314,7 +311,6 @@ export default function DrawPage({
                     )}
                     <div className="message-content-col">
                       <div className="message-meta">
-                        <img className="message-avatar" src="/logo-2.png" alt="" />
                         <span>AI</span>
                         <time>{formatTime(msg.createdAt)}</time>
                       </div>
@@ -325,15 +321,15 @@ export default function DrawPage({
                         )}
                         {!drawSelectMode && (
                           <div className="draw-result-actions">
-                            <button className="tool-button" type="button" onClick={() => handleCopy(msg)}>
+                            <Button className="tool-button" type="text" size="small" onClick={() => handleCopy(msg)}>
                               {copiedId === msg.id ? '已复制' : '复制提示词'}
-                            </button>
-                            <button className="tool-button" type="button" onClick={() => downloadImage(msg.imageUrl, msg.prompt)}>
+                            </Button>
+                            <Button className="tool-button" type="default" size="small" onClick={() => downloadImage(msg.imageUrl, msg.prompt)}>
                               保存到相册
-                            </button>
-                            <button className="tool-button tool-button-retry" type="button" onClick={() => requestDeleteDrawMessage(activeDrawConversation.id, msg.id)}>
+                            </Button>
+                            <Button className="tool-button tool-button-delete" type="text" size="small" danger onClick={() => requestDeleteDrawMessage(activeDrawConversation.id, msg.id)}>
                               删除
-                            </button>
+                            </Button>
                           </div>
                         )}
                       </div>
@@ -365,7 +361,6 @@ export default function DrawPage({
                     )}
                     <div className="message-content-col">
                       <div className="message-meta">
-                        <img className="message-avatar" src="/logo-2.png" alt="" />
                         <span>AI</span>
                       </div>
                       <div className="message-bubble">
@@ -400,7 +395,6 @@ export default function DrawPage({
                     )}
                     <div className="message-content-col">
                       <div className="message-meta">
-                        <img className="message-avatar" src="/logo-2.png" alt="" />
                         <span>AI</span>
                       </div>
                       <div className="message-bubble">
@@ -423,34 +417,34 @@ export default function DrawPage({
           </section>
           <Scrollbar scrollRef={messageListRef} />
           {showScrollToBottom && (
-            <button
-              type="button"
+            <Button
+              type="default"
+              size="small"
               className="scroll-to-bottom-button"
               onClick={scrollToBottom}
               aria-label="滚动到底部"
-            >
-              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 12 10 17 15 12" /><line x1="10" y1="3" x2="10" y2="17" /></svg>
-            </button>
+              icon={
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="5 12 10 17 15 12" /><line x1="10" y1="3" x2="10" y2="17" /></svg>
+              }
+            />
           )}
         </div>
 
         <footer className="composer-panel">
           {drawSelectMode ? (
             <div className="select-action-bar">
-              <button className="select-action-btn select-action-btn-user" type="button" onClick={selectAllDrawUserMessages}>
-                全选用户
-              </button>
-              <button className="select-action-btn select-action-btn-ai" type="button" onClick={selectAllDrawAssistantMessages}>
-                全选AI
-              </button>
-              <button
+              <Button className="select-action-btn select-action-btn-user" type="default" size="small" onClick={selectAllDrawUserMessages}>全选用户</Button>
+              <Button className="select-action-btn select-action-btn-ai" type="default" size="small" onClick={selectAllDrawAssistantMessages}>全选AI</Button>
+              <Button
                 className="select-action-btn select-action-btn-delete"
-                type="button"
+                type="primary"
+                danger
+                size="small"
                 onClick={deleteSelectedDrawMessages}
                 disabled={drawSelectedMessageIds.size === 0}
               >
                 删除({drawSelectedMessageIds.size})
-              </button>
+              </Button>
             </div>
           ) : (
             <>
@@ -467,75 +461,64 @@ export default function DrawPage({
                     <div className="pending-image-title">参考图（图生图）</div>
                     <div className="pending-image-name">{drawPendingImage.name}</div>
                   </div>
-                  <button className="pending-image-remove" type="button" onClick={() => setDrawPendingImage(null)}>
-                    移除
-                  </button>
+                  <Button className="pending-image-remove" type="text" size="small" danger onClick={() => setDrawPendingImage(null)}>移除</Button>
                 </div>
               )}
               <div className="draw-config">
-                <label className="draw-config-item">
+                <div className="draw-config-item">
                   <span>模型</span>
-                  <select
-                    className="draw-config-select"
+                  <Select
                     value={settings.drawModel || 'gpt-image-2'}
-                    onChange={(e) => setSettings((s) => ({ ...s, drawModel: e.target.value }))}
-                  >
-                    {DRAW_MODEL_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="draw-config-item">
+                    onChange={(value) => setSettings((s) => ({ ...s, drawModel: value }))}
+                    options={DRAW_MODEL_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
+                  />
+                </div>
+                <div className="draw-config-item">
                   <span>模式</span>
-                  <select
-                    className="draw-config-select"
+                  <Select
                     value={settings.drawApiMode || 'images'}
-                    onChange={(e) => setSettings((s) => ({ ...s, drawApiMode: e.target.value }))}
-                  >
-                    {DRAW_API_MODE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="draw-config-item">
+                    onChange={(value) => setSettings((s) => ({ ...s, drawApiMode: value }))}
+                    options={DRAW_API_MODE_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
+                  />
+                </div>
+                <div className="draw-config-item">
                   <span>尺寸</span>
-                  <select
-                    className="draw-config-select"
+                  <Select
                     value={settings.drawSize || '1024x1792'}
-                    onChange={(e) => setSettings((s) => ({ ...s, drawSize: e.target.value }))}
-                  >
-                    {DRAW_SIZE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="draw-config-item">
+                    onChange={(value) => setSettings((s) => ({ ...s, drawSize: value }))}
+                    options={DRAW_SIZE_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
+                  />
+                </div>
+                <div className="draw-config-item">
                   <span>质量</span>
-                  <select
-                    className="draw-config-select"
+                  <Select
                     value={settings.drawQuality || 'medium'}
-                    onChange={(e) => setSettings((s) => ({ ...s, drawQuality: e.target.value }))}
-                  >
-                    {DRAW_QUALITY_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </label>
+                    onChange={(value) => setSettings((s) => ({ ...s, drawQuality: value }))}
+                    options={DRAW_QUALITY_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
+                  />
+                </div>
                 {activeDrawMessages.length > 0 && !isGenerating && (
-                  <button
-                    className="manage-button draw-config-manage"
-                    type="button"
+                  <Button
+                    className="draw-config-manage manage-button"
+                    type="dashed"
+                    size="small"
                     onClick={exitDrawSelectMode}
                     aria-label="管理画图记录"
                   >
                     管理
-                  </button>
+                  </Button>
                 )}
               </div>
               <div className="draw-input-row">
-                <button className="upload-button" type="button" onClick={() => drawFileInputRef.current?.click()} aria-label="上传参考图">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                </button>
+                <Button
+                  className="upload-button"
+                  type="default"
+                  size="small"
+                  onClick={() => drawFileInputRef.current?.click()}
+                  aria-label="上传参考图"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                </Button>
                 <textarea
                   className="draw-input"
                   rows={1}
@@ -551,18 +534,17 @@ export default function DrawPage({
                   disabled={isGenerating}
                 />
                 {isGenerating ? (
-                  <button className="send-button stop-button" type="button" onClick={stopDrawGeneration}>
-                    停止
-                  </button>
+                  <Button className="send-button stop-button" type="primary" danger size="small" onClick={stopDrawGeneration}>停止</Button>
                 ) : (
-                  <button
-                    className="send-button draw-send-button"
-                    type="button"
+                  <Button
+                    className="send-button"
+                    type="primary"
+                    size="small"
                     disabled={!drawPrompt.trim() || isGenerating || authState !== 'authenticated'}
                     onClick={handleDraw}
                   >
                     生成
-                  </button>
+                  </Button>
                 )}
               </div>
             </>

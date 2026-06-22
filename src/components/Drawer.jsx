@@ -1,10 +1,6 @@
-import { classNames, formatDateTime, normalizeModelSettings } from '../lib/utils';
-import {
-  FONT_SIZE_OPTIONS,
-  SOURCE_OPTIONS,
-  RIGHTCODE_PRICING_OPTIONS,
-  MODEL_OPTIONS,
-} from '../lib/constants';
+import { Button, Card, Input, Select } from 'animal-island-ui';
+import { FONT_SIZE_OPTIONS, MODEL_OPTIONS } from '../lib/constants';
+import { formatDateTime, normalizeModelSettings } from '../lib/utils';
 
 export default function Drawer({
   drawerOpen,
@@ -20,56 +16,59 @@ export default function Drawer({
   setSettings,
   handleLogout,
 }) {
+  function switchDrawerTab(nextTab) {
+    setDrawerTab(nextTab);
+  }
+
   return (
     <>
-      <aside className={classNames('drawer', drawerOpen && 'drawer-open')}>
+      <aside className={`drawer ${drawerOpen ? 'drawer-open' : ''}`}>
         <div className="drawer-header">
           <div className="drawer-brand">
-            <img className="drawer-logo" src="/logo-2.png" alt="" />
             <div>
-              <div className="drawer-kicker">lightChat</div>
               <div className="drawer-title">{drawerTab === 'history' ? '对话记录' : '接口设置'}</div>
             </div>
           </div>
-          <button className="plain-icon-button" type="button" onClick={() => setDrawerOpen(false)}>
-            关闭
-          </button>
+          <Button className="drawer-close-button" type="text" size="small" onClick={() => setDrawerOpen(false)}>关闭</Button>
         </div>
 
-        <div className="drawer-tabs" role="tablist">
+        <div className="drawer-mode-shell" role="tablist" aria-label="对话与设置切换">
           <button
-            className={classNames('tab-button', drawerTab === 'history' && 'tab-button-active')}
             type="button"
-            onClick={() => setDrawerTab('history')}
+            role="tab"
+            aria-selected={drawerTab === 'history'}
+            className={`drawer-mode-option ${drawerTab === 'history' ? 'drawer-mode-option-active' : ''}`}
+            onClick={() => switchDrawerTab('history')}
           >
-            对话
+            <span className="drawer-mode-title">对话</span>
           </button>
+
           <button
-            className={classNames('tab-button', drawerTab === 'settings' && 'tab-button-active')}
             type="button"
-            onClick={() => setDrawerTab('settings')}
+            role="tab"
+            aria-selected={drawerTab === 'settings'}
+            className={`drawer-mode-option ${drawerTab === 'settings' ? 'drawer-mode-option-active' : ''}`}
+            onClick={() => switchDrawerTab('settings')}
           >
-            设置
+            <span className="drawer-mode-title">设置</span>
           </button>
         </div>
 
         {drawerTab === 'history' ? (
           <div className="history-pane">
-            <button className="primary-button wide-button" type="button" onClick={createNewConversation}>
+            <Button className="drawer-primary-action" type="primary" block onClick={createNewConversation}>
               新建对话
-            </button>
+            </Button>
 
             <div className="history-list">
               {conversations
                 .slice()
                 .sort((a, b) => b.updatedAt - a.updatedAt)
                 .map((conversation) => (
-                  <div
+                  <Card
                     key={conversation.id}
-                    className={classNames(
-                      'history-card',
-                      conversation.id === activeConversationId && 'history-card-active',
-                    )}
+                    className={`history-card ${conversation.id === activeConversationId ? 'history-card-active' : ''}`}
+                    color={conversation.id === activeConversationId ? 'app-teal' : 'default'}
                   >
                     <button
                       className="history-main"
@@ -84,131 +83,46 @@ export default function Drawer({
                         {conversation.messages.length} 条消息 · {formatDateTime(conversation.updatedAt)}
                       </span>
                     </button>
-                    <button
+                    <Button
                       className="history-delete"
-                      type="button"
-                      aria-label="删除对话"
+                      type="text"
+                      size="small"
+                      danger
                       onClick={() => setDeleteConversationTarget(conversation.id)}
                     >
                       删除
-                    </button>
-                  </div>
+                    </Button>
+                  </Card>
                 ))}
             </div>
           </div>
         ) : (
           <div className="settings-form">
-            <label className="field">
+            <div className="field">
               <span className="field-label">字体大小</span>
-              <select
-                className="field-input"
+              <Select
                 value={settings.fontSize}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, fontSize: event.target.value }))
+                onChange={(value) =>
+                  setSettings((current) => ({ ...current, fontSize: value }))
                 }
-              >
-                {FONT_SIZE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={FONT_SIZE_OPTIONS.map((option) => ({ key: option.value, label: option.label }))}
+              />
+            </div>
 
-            {false && (
-              <>
-
-            <label className="field">
-              <span className="field-label">接口来源</span>
-              <select
-                className="field-input"
-                value={settings.source}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, source: event.target.value }))
-                }
-              >
-                {SOURCE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {settings.source === 'rightcode' && (
-              <label className="field">
-                <span className="field-label">计费方式</span>
-                <select
-                  className="field-input"
-                  value={settings.rightcodePricing || 'regular'}
-                  onChange={(event) => {
-                    const pricing = event.target.value;
-                    setSettings((current) => ({
-                      ...current,
-                      rightcodePricing: pricing,
-                    }));
-                  }}
-                >
-                  {RIGHTCODE_PRICING_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {!settings.useProxy && (
-              <>
-                <label className="field">
-                  <span className="field-label">请求地址</span>
-                  <input
-                    className="field-input"
-                    value={settings.endpoint}
-                    onChange={(event) =>
-                      setSettings((current) => ({ ...current, endpoint: event.target.value }))
-                    }
-                    placeholder="请输入真实上游接口地址"
-                  />
-                </label>
-
-                <label className="field">
-                  <span className="field-label">密钥</span>
-                  <input
-                    className="field-input"
-                    value={settings.apiKey}
-                    onChange={(event) =>
-                      setSettings((current) => ({ ...current, apiKey: event.target.value }))
-                    }
-                    placeholder="请输入 API Key"
-                  />
-                </label>
-              </>
-            )}
-
-              </>
-            )}
-
-            <label className="field">
-              <span className="field-label">模型名</span>
-              <select
-                className="field-input"
+            <div className="field">
+              <span className="field-label">模型名称</span>
+              <Select
                 value={settings.model}
-                onChange={(event) =>
+                onChange={(value) =>
                   setSettings((current) =>
-                    normalizeModelSettings({ ...current, model: event.target.value }),
+                    normalizeModelSettings({ ...current, model: value }),
                   )
                 }
-              >
-                {MODEL_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                options={MODEL_OPTIONS.map((option) => ({ key: option.value, label: option.label }))}
+              />
+            </div>
 
-            <label className="field">
+            <div className="field">
               <span className="field-label">系统提示词</span>
               <textarea
                 className="field-input field-textarea"
@@ -216,15 +130,14 @@ export default function Drawer({
                 onChange={(event) =>
                   setSettings((current) => ({ ...current, systemPrompt: event.target.value }))
                 }
-                placeholder="可用来固定助手风格"
+                placeholder="可以用来固定助手风格"
               />
-            </label>
+            </div>
 
             <div className="field-row">
-              <label className="field">
+              <div className="field">
                 <span className="field-label">温度</span>
-                <input
-                  className="field-input"
+                <Input
                   type="number"
                   min="0"
                   max="2"
@@ -237,12 +150,11 @@ export default function Drawer({
                     }))
                   }
                 />
-              </label>
+              </div>
 
-              <label className="field">
+              <div className="field">
                 <span className="field-label">最大输出</span>
-                <input
-                  className="field-input"
+                <Input
                   type="number"
                   min="256"
                   step="128"
@@ -254,52 +166,12 @@ export default function Drawer({
                     }))
                   }
                 />
-              </label>
+              </div>
             </div>
 
-            {false && (
-              <>
-
-            <label className="check-field">
-              <input
-                type="checkbox"
-                checked={settings.stream}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, stream: event.target.checked }))
-                }
-              />
-              <span>启用流式输出</span>
-            </label>
-
-            <label className="check-field">
-              <input
-                type="checkbox"
-                checked={settings.useProxy}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, useProxy: event.target.checked }))
-                }
-              />
-              <span>通过代理请求</span>
-            </label>
-
-            <label className="field">
-              <span className="field-label">代理地址</span>
-              <input
-                className="field-input"
-                value={settings.proxyPath}
-                onChange={(event) =>
-                  setSettings((current) => ({ ...current, proxyPath: event.target.value }))
-                }
-                placeholder="/api/proxy 或 https://你的代理地址"
-              />
-            </label>
-
-              </>
-            )}
-
-            <button className="secondary-button wide-button" type="button" onClick={handleLogout}>
+            <Button className="drawer-logout-button" type="default" danger block onClick={handleLogout}>
               退出登录
-            </button>
+            </Button>
           </div>
         )}
       </aside>

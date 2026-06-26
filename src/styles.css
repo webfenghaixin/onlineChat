@@ -2509,12 +2509,12 @@ button:disabled {
 /* ========== Animal Island UI refactor overrides ========== */
 :root {
   font-family:
-    Nunito,
-    "Noto Sans SC",
     -apple-system,
     "PingFang SC",
     "Hiragino Sans GB",
     "Microsoft YaHei",
+    "Noto Sans SC",
+    system-ui,
     sans-serif;
   color: #725d42;
   background:

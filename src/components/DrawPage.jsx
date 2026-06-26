@@ -119,8 +119,10 @@ export default function DrawPage({
     }
   }
 
-  const currentModelLabel =
-    DRAW_MODEL_OPTIONS.find((opt) => opt.value === (settings.drawModel || 'gpt-image-2'))?.label || 'GPT-Image-2';
+  const currentModelLabel = (() => {
+    const opt = DRAW_MODEL_OPTIONS.find((o) => o.value === (settings.drawModel || 'gpt-image-2'));
+    return opt?.disabled ? 'GPT-Image-2' : (opt?.label || 'GPT-Image-2');
+  })();
   const currentSizeLabel =
     DRAW_SIZE_OPTIONS.find((opt) => opt.value === (settings.drawSize || '1024x1792'))?.label || '1K · 9:16 全屏';
 
@@ -313,7 +315,7 @@ export default function DrawPage({
                         <span className="draw-msg-config">
                           {DRAW_MODEL_OPTIONS.find((o) => o.value === msg.model)?.label || msg.model || 'GPT-Image-2'}
                           {' · '}
-                          {DRAW_SIZE_OPTIONS.find((o) => o.value === msg.size)?.label}
+                          {DRAW_SIZE_OPTIONS.find((o) => o.value === msg.size)?.label || msg.size}
                           {' · '}
                           {DRAW_QUALITY_OPTIONS.find((o) => o.value === msg.quality)?.label}
                           {msg.referenceImage ? ' · 图生图' : ''}
@@ -559,8 +561,16 @@ export default function DrawPage({
                       <div className="draw-config-item">
                         <span>模型</span>
                         <Select
-                          value={settings.drawModel || 'gpt-image-2'}
-                          onChange={(value) => setSettings((s) => ({ ...s, drawModel: value }))}
+                          value={(() => {
+                            const current = settings.drawModel || 'gpt-image-2';
+                            const opt = DRAW_MODEL_OPTIONS.find((o) => o.value === current);
+                            return opt?.disabled ? 'gpt-image-2' : current;
+                          })()}
+                          onChange={(value) => {
+                            const opt = DRAW_MODEL_OPTIONS.find((o) => o.value === value);
+                            if (opt?.disabled) return;
+                            setSettings((s) => ({ ...s, drawModel: value }));
+                          }}
                           options={DRAW_MODEL_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
                         />
                       </div>

@@ -44,28 +44,15 @@ export const MODEL_OPTIONS = [
 
 export const DRAW_MODEL_OPTIONS = [
   { value: 'gpt-image-2', label: 'GPT-Image-2' },
-  { value: 'gpt-image-2-vip', label: 'GPT-Image-2-VIP' },
+  { value: 'gpt-image-2-vip', label: 'GPT-Image-2-VIP（暂不可用）', disabled: true },
 ];
 
 export const DRAW_SIZE_OPTIONS = [
-  // 1K 分辨率
   { value: '1024x1024', label: '1K · 1:1 方图' },
   { value: '1024x1536', label: '1K · 2:3 竖图' },
   { value: '1024x1792', label: '1K · 9:16 全屏' },
   { value: '1536x1024', label: '1K · 3:2 横图' },
   { value: '1792x1024', label: '1K · 16:9 宽屏' },
-  // 2K 分辨率
-  { value: '2048x2048', label: '2K · 1:1 方图' },
-  { value: '2048x3072', label: '2K · 2:3 竖图' },
-  { value: '2048x3584', label: '2K · 9:16 全屏' },
-  { value: '3072x2048', label: '2K · 3:2 横图' },
-  { value: '3584x2048', label: '2K · 16:9 宽屏' },
-  // 4K 分辨率
-  { value: '4096x4096', label: '4K · 1:1 方图' },
-  { value: '4096x6144', label: '4K · 2:3 竖图' },
-  { value: '4096x7168', label: '4K · 9:16 全屏' },
-  { value: '6144x4096', label: '4K · 3:2 横图' },
-  { value: '7168x4096', label: '4K · 16:9 宽屏' },
 ];
 
 export const DRAW_QUALITY_OPTIONS = [

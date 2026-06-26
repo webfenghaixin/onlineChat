@@ -4045,3 +4045,41 @@ select {
   min-height: 44px;
   color: #725d42;
 }
+
+/* ── Desktop: fix select dropdown visibility & positioning ── */
+@media (min-width: 561px) {
+  /* Drawer / 接口设置: allow dropdown to escape the scroll container */
+  .drawer .settings-form {
+    overflow: visible;
+  }
+
+  /* Drawer: position dropdown below the trigger, inside the drawer */
+  .drawer .field [class*='animal-dropdown'] {
+    top: 100% !important;
+    bottom: auto !important;
+    left: 0 !important;
+    right: auto !important;
+    transform: none !important;
+    margin: 6px 0 0 !important;
+    width: min(100%, 280px) !important;
+    min-width: 100%;
+    max-height: min(40vh, 280px);
+    overflow-y: auto;
+    z-index: 160;
+  }
+
+  /* DrawPage / 绘制参数: position dropdown above the trigger */
+  .draw-config-item [class*='animal-dropdown'] {
+    top: auto !important;
+    bottom: 100% !important;
+    left: 0 !important;
+    right: auto !important;
+    transform: none !important;
+    margin: 0 0 6px !important;
+    width: min(100%, 280px) !important;
+    min-width: 100%;
+    max-height: min(40vh, 280px);
+    overflow-y: auto;
+    z-index: 160;
+  }
+}

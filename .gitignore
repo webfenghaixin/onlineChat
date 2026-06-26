@@ -1,13 +1,72 @@
+# 依赖
 node_modules/
+.npm-cache/
+
+# 构建产物
 dist/
 .vercel/
+
+# 环境变量
 .env
 .env.local
 .env.*.local
-.DS_Store
+
+# 日志
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-.npm-cache
+
+# 编辑器 / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.tmp
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# 缓存
+.eslintcache
+.vite/
+
+# AI 工具
+.agents/
+
+# Android 构建产物
+android/app/build/
+android/.gradle/
+android/build/
+android/local.properties
+android/captures/
+android/app/release/
+*.keystore
+!debug.keystore
+
+# Android IDE / 工具生成
+android/**/*.iml
+android/.externalNativeBuild/
+android/.cxx/
+android/**/bin/
+android/**/gen/
+android/**/out/
+android/**/*.apk
+android/**/*.aab
+android/**/*.ap_
+android/**/*.aar
+android/**/*.dex
+android/**/*.class
+android/**/*.hprof
+
+# Capacitor 生成
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml
+android/capacitor-cordova-android-plugins/

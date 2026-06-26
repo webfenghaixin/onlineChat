@@ -1,3 +1,5 @@
+import { resolveApiUrl } from './constants';
+
 const TOKEN_KEY = 'online-chat-h5-token';
 const USERNAME_KEY = 'online-chat-h5-username';
 
@@ -56,7 +58,7 @@ async function apiRequest(url, options = {}) {
 }
 
 export async function register(username, password, inviteCode) {
-  const data = await apiRequest('/api/auth/register', {
+  const data = await apiRequest(resolveApiUrl('/api/auth/register'), {
     method: 'POST',
     body: JSON.stringify({ username, password, inviteCode }),
   });
@@ -65,7 +67,7 @@ export async function register(username, password, inviteCode) {
 }
 
 export async function login(username, password) {
-  const data = await apiRequest('/api/auth/login', {
+  const data = await apiRequest(resolveApiUrl('/api/auth/login'), {
     method: 'POST',
     body: JSON.stringify({ username, password }),
   });
@@ -74,7 +76,7 @@ export async function login(username, password) {
 }
 
 export async function saveToCloud(state) {
-  await apiRequest('/api/data/save', {
+  await apiRequest(resolveApiUrl('/api/data/save'), {
     method: 'POST',
     body: JSON.stringify({
       conversations: state.conversations,
@@ -87,6 +89,6 @@ export async function saveToCloud(state) {
 }
 
 export async function loadFromCloud() {
-  const data = await apiRequest('/api/data/load');
+  const data = await apiRequest(resolveApiUrl('/api/data/load'));
   return data;
 }

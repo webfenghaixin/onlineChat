@@ -1,4 +1,5 @@
 import { getToken } from './auth';
+import { DEFAULT_PROXY_PATH } from './constants';
 
 const SSE_BOUNDARY = '\n\n';
 const DRAW_TASK_POLL_INTERVAL_MS = 10000;
@@ -289,7 +290,7 @@ function cleanUndefinedValues(value) {
 
 function resolveRequestUrl(settings) {
   if (settings.useProxy !== false) {
-    const proxyPath = settings.proxyPath?.trim() || '/api/proxy';
+    const proxyPath = settings.proxyPath?.trim() || DEFAULT_PROXY_PATH;
     if (/^https?:\/\//i.test(proxyPath)) {
       return proxyPath;
     }
@@ -471,7 +472,7 @@ export async function streamChatCompletion({ settings, messages, signal, onText 
 
 function resolveDrawProxyUrl(settings, apiMode) {
   if (settings.useProxy) {
-    const proxyPath = settings.proxyPath?.trim() || '/api/proxy';
+    const proxyPath = settings.proxyPath?.trim() || DEFAULT_PROXY_PATH;
     const drawPath = proxyPath.replace(/\/proxy\/?$/, '/draw').replace(/\/proxy$/, '/draw');
     if (/^https?:\/\//i.test(drawPath)) {
       return drawPath;
@@ -520,7 +521,7 @@ function extractImageUrlFromContent(content) {
 }
 
 function resolveDrawTaskUrl(settings, path) {
-  const proxyPath = settings.proxyPath?.trim() || '/api/proxy';
+  const proxyPath = settings.proxyPath?.trim() || DEFAULT_PROXY_PATH;
   let basePath = proxyPath.replace(/\/proxy\/?$/, '').replace(/\/proxy$/, '');
   if (!basePath) basePath = '';
 

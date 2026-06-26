@@ -3,6 +3,7 @@ import {
   STORAGE_KEY,
   GEMINI_MODEL_ID,
   defaultSettings,
+  DEFAULT_PROXY_PATH,
 } from './constants';
 
 marked.setOptions({
@@ -36,7 +37,7 @@ export function normalizeModelSettings(settings) {
     rightcodePricing: 'regular',
     stream: true,
     useProxy: true,
-    proxyPath: '/api/proxy',
+    proxyPath: DEFAULT_PROXY_PATH,
   };
 
   if (isGeminiModel(nextSettings.model)) {

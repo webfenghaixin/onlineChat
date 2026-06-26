@@ -1,3 +1,14 @@
+// 打包成 App 时，通过 VITE_API_BASE 指向后端域名（例如 https://www.lightchat.online）
+// Web 部署时留空，使用相对路径 /api/...
+export const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '');
+export const DEFAULT_PROXY_PATH = API_BASE ? `${API_BASE}/api/proxy` : '/api/proxy';
+
+export function resolveApiUrl(path) {
+  if (!path) return path;
+  if (/^https?:\/\//i.test(path)) return path;
+  return API_BASE + (path.startsWith('/') ? path : `/${path}`);
+}
+
 export const STORAGE_KEY = 'online-chat-h5-state-v7';
 export const VITE_INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
 export const MAX_COMPOSER_HEIGHT = 140;
@@ -81,7 +92,7 @@ export const defaultSettings = {
   maxOutputTokens: 8192,
   stream: true,
   useProxy: true,
-  proxyPath: '/api/proxy',
+  proxyPath: DEFAULT_PROXY_PATH,
   fontSize: 'lg',
   drawSize: '1024x1024',
   drawQuality: 'medium',

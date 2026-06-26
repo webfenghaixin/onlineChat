@@ -1,0 +1,12 @@
+{
+  "appId": "online.lightchat.app",
+  "appName": "lightChat",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#f8f8f0"
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

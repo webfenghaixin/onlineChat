@@ -1,65 +1,202 @@
-# lightChat H5
+# lightChat
 
-这是一个适合手机浏览器使用的 React 聊天项目，支持：
+一个支持 AI 对话与 AI 画图的移动端优先聊天应用，基于 React + Vite 构建，同时支持 H5 网页和 Android 原生壳。
 
-- 大字号和更大的按钮，适合老人使用
-- 流式输出
-- 历史对话本地保存
-- 可切换 OpenAI Chat Completions / Responses 兼容模式
-- 开发环境同源代理，解决本地调试时的 CORS
+## 功能特性
 
-## 开发环境如何解决 CORS
+- AI 对话：流式输出，支持多种模型切换
+- AI 画图：支持文生图、图生图，可配置模型 / 尺寸 / 质量
+- 历史对话：本地持久化保存，支持管理
+- 接口设置：可自定义模型、温度、最大输出等参数
+- 移动端优先：适配手机浏览器和 Android 原生，桌面端自适应
+- 开发代理：本地开发环境内置同源代理，解决 CORS
 
-浏览器不允许网页直接绕过第三方接口的跨域限制，所以开发环境默认开启了同源代理：
+## 技术栈
 
-- 前端实际请求：`/api/proxy`
-- 真实上游地址：在页面设置里的“请求地址”填写
-- 真实密钥：在页面设置里的“密钥”填写
+- **前端**：React 18 + Vite 5 + animal-island-ui
+- **后端**：Vercel Serverless Functions（Node.js）
+- **存储**：Upstash Redis（用户认证、邀请码校验）
+- **Android**：Capacitor 8
 
-也就是说：
+## 项目结构
 
-1. 浏览器只请求当前站点自己的 `/api/proxy`
-2. Vite 本地开发服务收到请求后，再从服务端转发到真实接口
-3. 这样浏览器不会再因为跨域而拦截
-
-## 生产环境部署说明
-
-如果您最终只是把 `dist/index.html` 和静态资源直接丢到纯静态服务器上，而服务器没有反向代理能力，那么：
-
-- 前端直接请求第三方接口时，仍然可能遇到 CORS
-- 这不是前端代码本身能单独解决的
-
-生产环境需要二选一：
-
-1. 让上游接口服务器开放您的站点域名跨域
-2. 在您自己的服务器上配置反向代理，把例如 `/api/proxy` 转发到真实 AI 接口
-
-## Nginx 反向代理示例
-
-如果您的正式站点使用 Nginx，可以参考下面思路：
-
-```nginx
-location /api/proxy {
-    proxy_pass https://right.codes/codex-pro/gpt-5.4-medium;
-    proxy_http_version 1.1;
-    proxy_set_header Authorization $http_authorization;
-    proxy_set_header Content-Type application/json;
-    proxy_buffering off;
-    chunked_transfer_encoding on;
-}
+```
+├── api/                  # Vercel Serverless Functions
+│   ├── auth/             # 登录 / 注册
+│   ├── data/             # 聊天数据存取
+│   ├── draw-image/       # 图片生成
+│   ├── draw-task/        # 画图任务（启动 / 轮询）
+│   └── proxy.js          # AI 接口代理
+├── android/              # Capacitor Android 工程
+├── public/               # 静态资源
+├── scripts/
+│   └── build-android.mjs # Android 构建脚本
+├── src/
+│   ├── components/       # React 组件
+│   ├── lib/              # 工具函数、常量
+│   ├── App.jsx
+│   ├── main.jsx
+│   └── styles.css
+├── capacitor.config.json
+├── vercel.json
+└── vite.config.js
 ```
 
-如果您想保留“页面里自定义任意上游地址”的能力，那么正式环境更适合单独做一个后端代理接口，而不是纯 Nginx 固定转发。
-
-## 使用方式
+## 快速开始
 
 ```bash
+# 安装依赖
 npm install
+
+# 本地开发
 npm run dev
+
+# 构建 H5
 npm run build
 ```
 
-构建产物在：
+## 环境变量
 
-- `dist/index.html`
-- `dist/assets/*`
+复制 `.env.example` 为 `.env`，按需填写：
+
+| 变量 | 说明 |
+|------|------|
+| `VITE_INVITE_CODE` | 前端邀请码（注册页校验） |
+| `VITE_API_TARGET` | 后端 API 地址（默认 `https://www.lightchat.online`） |
+| `API_KEY_LUXEE` | Luxee AI 接口密钥（本地代理用） |
+| `API_KEY_RIGHTCODE` | RightCode AI 接口密钥（本地代理用） |
+| `INVITE_CODE` | 后端邀请码校验值 |
+| `JWT_SECRET` | JWT 签名密钥 |
+| `UPSTASH_REDIS_REST_URL` | Upstash Redis 地址 |
+| `UPSTASH_REDIS_REST_TOKEN` | Upstash Redis Token |
+
+## 打包 Android
+
+### 前置条件
+
+- 安装 [Android Studio](https://developer.android.com/studio)
+- Android SDK 已配置（API 34+）
+- JDK 17+
+
+### 构建步骤
+
+```bash
+# 1. 构建 Web 资源并同步到 Android 工程（一键完成）
+npm run build:android
+```
+
+此命令会依次执行：
+1. `vite build` — 构建 Web 产物到 `dist/`
+2. `cap sync android` — 将 `dist/` 同步到 `android/app/src/main/assets/public/`
+
+如需指定后端地址：
+
+```bash
+VITE_API_BASE=https://your-api.example.com npm run build:android
+```
+
+### 在 Android Studio 中打包
+
+1. 用 Android Studio 打开 `android/` 目录
+2. 等待 Gradle 同步完成
+3. 构建 APK：
+   - **Debug**：菜单 Build → Build Bundle(s) / APK(s) → Build APK(s)
+   - **Release**：菜单 Build → Generate Signed Bundle / APK，按向导签名打包
+
+或使用命令行：
+
+```bash
+cd android
+
+# Debug APK → android/app/build/outputs/apk/debug/
+gradlew assembleDebug
+
+# Release APK → android/app/build/outputs/apk/release/
+gradlew assembleRelease
+```
+
+### 更新 Android 应用
+
+当 Web 端有代码更新时，只需重新执行：
+
+```bash
+npm run build:android
+```
+
+然后在 Android Studio 中重新构建 APK 即可。如果仅修改了 Web 资源（未改原生配置），Capacitor 会自动覆盖 `assets/public/`，无需手动操作。
+
+## 发布 H5 页面
+
+项目使用 [Vercel](https://vercel.com) 部署，配置见 `vercel.json`。
+
+### 方式一：Vercel 自动部署（推荐）
+
+1. 将代码推送到 GitHub 仓库
+2. 在 Vercel 控制台导入该仓库
+3. Vercel 会自动识别 Vite 项目，执行 `npm run build`，产物输出到 `dist/`
+4. 每次推送代码，Vercel 自动重新部署
+
+### 方式二：Vercel CLI 手动部署
+
+```bash
+# 安装 Vercel CLI
+npm i -g vercel
+
+# 首次部署（按提示选择项目、配置环境变量）
+vercel
+
+# 后续部署到生产环境
+vercel --prod
+```
+
+### 方式三：纯静态部署
+
+```bash
+# 构建
+npm run build
+```
+
+将 `dist/` 目录下的所有文件部署到任意静态服务器（Nginx、COS、OSS 等），注意：
+
+- 需要配置 SPA 回退：所有路径重写到 `index.html`
+- 需要配置反向代理 `/api/*` 到后端，或让上游接口开放跨域
+
+### Nginx 配置参考
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+    root /var/www/lightchat;
+    index index.html;
+
+    # SPA 回退
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # API 反向代理（如需自建后端）
+    location /api/ {
+        proxy_pass https://www.lightchat.online;
+        proxy_http_version 1.1;
+        proxy_set_header Host $proxy_host;
+        proxy_buffering off;
+    }
+}
+```
+
+## 开发环境 CORS 说明
+
+浏览器不允许网页直接请求第三方接口，本地开发通过 Vite 内置同源代理解决：
+
+1. 浏览器请求 `/api/proxy`
+2. Vite 开发服务器将请求转发到页面设置中配置的上游地址
+3. 服务端转发无跨域限制
+
+生产环境需二选一：
+- 让上游接口开放跨域
+- 在自己的服务器配置反向代理
+
+## License
+
+Private

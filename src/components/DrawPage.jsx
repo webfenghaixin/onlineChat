@@ -18,6 +18,8 @@ import {
 import { prepareDrawReferenceImage } from '../lib/image-utils';
 import ConfirmDialog from './ConfirmDialog';
 import Scrollbar from './Scrollbar';
+import BalanceBar from './BalanceBar';
+import { COST_DRAW } from '../lib/constants';
 
 export default function DrawPage({
   settings,
@@ -63,6 +65,8 @@ export default function DrawPage({
   deleteSelectedDrawMessages,
   drawFileInputRef,
   authState,
+  balance,
+  onRecharge,
 }) {
   const [copiedId, setCopiedId] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -249,6 +253,12 @@ export default function DrawPage({
             </>
           )}
         </header>
+
+        <BalanceBar
+          balance={balance}
+          cost={COST_DRAW}
+          onRecharge={onRecharge}
+        />
 
         <div className="message-list-wrapper">
           <section className="message-list" ref={messageListRef} aria-live="polite">

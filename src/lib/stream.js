@@ -308,6 +308,10 @@ function buildRequestHeaders(settings) {
   if (settings.useProxy !== false) {
     headers['X-Source'] = settings.source || 'luxee';
     headers['X-Model'] = settings.model || '';
+    const token = getToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
   } else {
     if (settings.apiKey.trim()) {
       headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
@@ -397,7 +401,15 @@ export async function streamChatCompletion({ settings, messages, signal, onText 
 
   if (!response.ok) {
     const errorText = await readAsText(response);
-    throw new Error(`接口返回 ${response.status}：${errorText}`);
+    let code;
+    try {
+      const parsed = JSON.parse(errorText);
+      code = parsed?.code;
+    } catch {}
+    const err = new Error(`接口返回 ${response.status}：${errorText}`);
+    err.status = response.status;
+    err.code = code;
+    throw err;
   }
 
   if (!response.body) {
@@ -578,7 +590,15 @@ function extractImageUrlFromPayload(payload) {
 
 async function throwDrawResponseError(response) {
   const errorText = await response.text().catch(() => '请求失败');
-  throw new Error(normalizeDrawErrorMessage(errorText, response.status));
+  let code;
+  try {
+    const parsed = JSON.parse(errorText);
+    code = parsed?.code;
+  } catch {}
+  const err = new Error(normalizeDrawErrorMessage(errorText, response.status));
+  err.status = response.status;
+  err.code = code;
+  throw err;
 }
 
 function createNoImageError(rawText, apiModeLabel = '当前模式') {
@@ -659,12 +679,15 @@ async function generateImageViaTaskApi({
 
   const startData = await readJsonResponse(startResponse);
   if (!startResponse.ok) {
-    throw new Error(
+    const err = new Error(
       normalizeDrawErrorMessage(
         startData.error || `创建绘图任务失败 (${startResponse.status})`,
         startResponse.status,
       ),
     );
+    err.status = startResponse.status;
+    err.code = startData.code;
+    throw err;
   }
 
   const taskId = startData.taskId;

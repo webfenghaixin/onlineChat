@@ -144,3 +144,63 @@ export async function authenticate(request) {
 
   return { username: payload.username };
 }
+
+// ===== 余额系统 =====
+// 单位：元。聊天一次 0.05，制图一张 0.3，注册赠送 5。
+export const BALANCE_INITIAL = 5;
+export const COST_CHAT = 0.05;
+export const COST_DRAW = 0.3;
+export const BALANCE_MIN_PRECISION = 0.0001;
+
+function round2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+export async function getUserBalance(redis, username) {
+  const user = await getRedisJson(redis, `user:${username}`);
+  if (!user) return 0;
+  const bal = Number(user.balance);
+  return Number.isFinite(bal) ? round2(bal) : 0;
+}
+
+export async function setUserBalance(redis, username, balance) {
+  const user = (await getRedisJson(redis, `user:${username}`)) || {};
+  user.balance = round2(balance);
+  await setRedisJson(redis, `user:${username}`, user);
+  return user.balance;
+}
+
+/**
+ * 扣费。仅在 amount > 0 且扣后余额 >= -BALANCE_MIN_PRECISION 时执行。
+ * 返回 { ok, balance, reason }。余额不足时 ok=false，不修改余额。
+ */
+export async function chargeUser(redis, username, amount) {
+  if (!redis || !username) return { ok: false, balance: 0, reason: '参数缺失' };
+  const cost = round2(amount);
+  if (cost <= 0) return { ok: true, balance: await getUserBalance(redis, username), reason: '零扣费' };
+
+  const user = (await getRedisJson(redis, `user:${username}`)) || {};
+  const current = Number.isFinite(Number(user.balance)) ? round2(user.balance) : 0;
+  if (current < cost - BALANCE_MIN_PRECISION) {
+    return { ok: false, balance: current, reason: '余额不足' };
+  }
+  const next = round2(current - cost);
+  user.balance = next;
+  await setRedisJson(redis, `user:${username}`, user);
+  return { ok: true, balance: next, reason: 'ok' };
+}
+
+/**
+ * 充值。直接加金额到余额。
+ */
+export async function rechargeUser(redis, username, amount) {
+  if (!redis || !username) return { ok: false, balance: 0 };
+  const add = round2(amount);
+  if (add <= 0) return { ok: false, balance: await getUserBalance(redis, username), reason: '充值金额需大于 0' };
+  const user = (await getRedisJson(redis, `user:${username}`)) || {};
+  const current = Number.isFinite(Number(user.balance)) ? round2(user.balance) : 0;
+  const next = round2(current + add);
+  user.balance = next;
+  await setRedisJson(redis, `user:${username}`, user);
+  return { ok: true, balance: next };
+}

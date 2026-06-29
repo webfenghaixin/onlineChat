@@ -9,6 +9,7 @@ import {
   createRedis,
   setRedisJsonNx,
   getRedisJson,
+  BALANCE_INITIAL,
 } from '../lib/auth-utils.js';
 
 export default async function handler(request) {
@@ -48,6 +49,7 @@ export default async function handler(request) {
     salt,
     passwordHash,
     createdAt: Date.now(),
+    balance: BALANCE_INITIAL,
   };
 
   const setResult = await setRedisJsonNx(redis, userKey, userRecord);
@@ -68,5 +70,5 @@ export default async function handler(request) {
     jwtSecret,
   );
 
-  return jsonResponse(200, { token, username: normalizedUsername });
+  return jsonResponse(200, { token, username: normalizedUsername, balance: BALANCE_INITIAL });
 }

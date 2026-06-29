@@ -48,10 +48,14 @@ async function apiRequest(url, options = {}) {
     headers,
   });
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.error || `请求失败 (${response.status})`);
+    const err = new Error(data.error || `请求失败 (${response.status})`);
+    err.status = response.status;
+    err.code = data.code;
+    err.payload = data;
+    throw err;
   }
 
   return data;
@@ -90,5 +94,18 @@ export async function saveToCloud(state) {
 
 export async function loadFromCloud() {
   const data = await apiRequest(resolveApiUrl('/api/data/load'));
+  return data;
+}
+
+export async function fetchBalance() {
+  const data = await apiRequest(resolveApiUrl('/api/balance'), { method: 'GET' });
+  return data;
+}
+
+export async function rechargeBalance(amount) {
+  const data = await apiRequest(resolveApiUrl('/api/balance'), {
+    method: 'POST',
+    body: JSON.stringify({ amount }),
+  });
   return data;
 }

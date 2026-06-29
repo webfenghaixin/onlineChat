@@ -7,6 +7,8 @@ import {
   signJWT,
   createRedis,
   getRedisJson,
+  setRedisJson,
+  BALANCE_INITIAL,
 } from '../lib/auth-utils.js';
 
 export default async function handler(request) {
@@ -40,6 +42,14 @@ export default async function handler(request) {
     return jsonResponse(401, { error: '用户名或密码错误' });
   }
 
+  // 老用户兜底：未设置余额字段的，按初始额度补发
+  let balance = Number(user.balance);
+  if (!Number.isFinite(balance)) {
+    balance = BALANCE_INITIAL;
+    user.balance = balance;
+    await setRedisJson(redis, `user:${normalizedUsername}`, user);
+  }
+
   const jwtSecret = process.env.JWT_SECRET || '';
   if (!jwtSecret) return jsonResponse(500, { error: '服务端未配置 JWT_SECRET' });
 
@@ -48,5 +58,5 @@ export default async function handler(request) {
     jwtSecret,
   );
 
-  return jsonResponse(200, { token, username: normalizedUsername });
+  return jsonResponse(200, { token, username: normalizedUsername, balance: Math.round(balance * 100) / 100 });
 }

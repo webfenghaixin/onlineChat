@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { streamChatCompletion, generateImage, pollDrawTask } from './lib/stream';
-import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername } from './lib/auth';
-import { DRAW_MAX_IMAGES } from './lib/constants';
+import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername, fetchBalance, rechargeBalance } from './lib/auth';
+import { DRAW_MAX_IMAGES, COST_CHAT, COST_DRAW, BALANCE_RECHARGE_PRESETS } from './lib/constants';
 import {
   classNames,
   loadState,
@@ -28,6 +28,8 @@ import Scrollbar from './components/Scrollbar';
 import Composer from './components/Composer';
 import DrawPage from './components/DrawPage';
 import ConfirmDialog from './components/ConfirmDialog';
+import BalanceBar from './components/BalanceBar';
+import RechargeDialog from './components/RechargeDialog';
 import { Button, Card, Divider, Footer, Title } from 'animal-island-ui';
 
 export default function App() {
@@ -69,6 +71,9 @@ export default function App() {
   const [drawSelectMode, setDrawSelectMode] = useState(false);
   const [drawSelectedMessageIds, setDrawSelectedMessageIds] = useState(new Set());
   const [deleteConversationTarget, setDeleteConversationTarget] = useState(null);
+  const [balance, setBalance] = useState(null);
+  const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false);
+  const [rechargeLoading, setRechargeLoading] = useState(false);
 
   const abortControllerRef = useRef(null);
   const drawAbortControllerRef = useRef(null);
@@ -214,6 +219,9 @@ export default function App() {
           if (cancelled) return;
           setAuthState('authenticated');
         }, 900);
+        fetchBalance()
+          .then((r) => { if (!cancelled) setBalance(r.balance); })
+          .catch(() => {});
       })
       .catch(() => {
         if (cancelled) return;
@@ -637,9 +645,36 @@ export default function App() {
     });
   }
 
+  async function refreshBalance() {
+    try {
+      const r = await fetchBalance();
+      setBalance(r.balance);
+    } catch {}
+  }
+
+  async function handleRecharge(amount) {
+    setRechargeLoading(true);
+    try {
+      const r = await rechargeBalance(amount);
+      setBalance(r.balance);
+      setRechargeDialogOpen(false);
+    } catch (error) {
+      setErrorText(error.message || '充值失败');
+    } finally {
+      setRechargeLoading(false);
+    }
+  }
+
   async function handleDraw() {
     const prompt = drawPrompt.trim();
     if (!prompt || isGenerating || authState !== 'authenticated') {
+      return;
+    }
+
+    // 余额预检
+    if (balance !== null && balance < COST_DRAW - 0.0001) {
+      setErrorText(`余额不足，制图需要 ${COST_DRAW} 元，当前余额 ${balance.toFixed(2)} 元`);
+      setRechargeDialogOpen(true);
       return;
     }
 
@@ -745,6 +780,11 @@ export default function App() {
         const nextErrorText = error.message || '图片生成失败，请重试。';
         setErrorText(nextErrorText);
         setStatusText('图片生成失败');
+        // 余额不足或扣费失败时刷新余额并弹充值框
+        if (error.code === 'INSUFFICIENT_BALANCE' || error.status === 402) {
+          refreshBalance();
+          setRechargeDialogOpen(true);
+        }
         // Update the assistant message with error
         updateDrawConversation(targetConvId, (conv) => ({
           ...conv,
@@ -768,6 +808,8 @@ export default function App() {
         activeDrawTaskIdsRef.current.delete(currentTaskId);
       }
       setIsGenerating(false);
+      // 异步刷新余额（扣费在图片成功后执行）
+      refreshBalance();
     }
   }
 
@@ -890,6 +932,13 @@ export default function App() {
       return;
     }
 
+    // 余额预检
+    if (balance !== null && balance < COST_CHAT - 0.0001) {
+      setErrorText(`余额不足，聊天需要 ${COST_CHAT} 元，当前余额 ${balance.toFixed(2)} 元`);
+      setRechargeDialogOpen(true);
+      return;
+    }
+
     const now = Date.now();
     const userMessage = {
       id: createId(),
@@ -967,6 +1016,11 @@ export default function App() {
         const nextErrorText = error.message || '请求失败，请检查接口地址或密钥。';
         setErrorText(nextErrorText);
         setStatusText('请求失败');
+        // 余额不足或扣费失败时刷新余额并弹充值框
+        if (error.code === 'INSUFFICIENT_BALANCE' || error.status === 402) {
+          refreshBalance();
+          setRechargeDialogOpen(true);
+        }
         updateConversation(activeConversation.id, (conversation) => ({
           ...conversation,
           messages: conversation.messages.map((message) =>
@@ -979,6 +1033,8 @@ export default function App() {
     } finally {
       abortControllerRef.current = null;
       setIsSending(false);
+      // 异步刷新余额（扣费在响应开始时执行）
+      refreshBalance();
       // 回答完成提示
       setShowCompleteHint(true);
       setTimeout(() => setShowCompleteHint(false), 3000);
@@ -1244,6 +1300,13 @@ export default function App() {
           statusText={statusText}
           openDrawMode={openDrawMode}
         />
+        {!drawMode && (
+          <BalanceBar
+            balance={balance}
+            cost={COST_CHAT}
+            onRecharge={() => setRechargeDialogOpen(true)}
+          />
+        )}
 
         <div className="message-list-wrapper">
           <section className="message-list" ref={messageListRef} aria-live="polite">
@@ -1388,8 +1451,18 @@ export default function App() {
           deleteSelectedDrawMessages={deleteSelectedDrawMessages}
           drawFileInputRef={drawFileInputRef}
           authState={authState}
+          balance={balance}
+          onRecharge={() => setRechargeDialogOpen(true)}
         />
       )}
+
+      <RechargeDialog
+        visible={rechargeDialogOpen}
+        balance={balance}
+        loading={rechargeLoading}
+        onRecharge={handleRecharge}
+        onCancel={() => setRechargeDialogOpen(false)}
+      />
 
       {authState === 'loading' && <AuthLoading active={authLoadingActive} />}
     </div>

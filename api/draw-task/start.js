@@ -2,7 +2,7 @@ export const config = {
   maxDuration: 300,
 };
 
-import { createRedis, getRedisJson, setRedisJson, verifyJWT } from '../lib/auth-utils.js';
+import { createRedis, getRedisJson, setRedisJson, verifyJWT, chargeUser, COST_DRAW, getUserBalance } from '../lib/auth-utils.js';
 import { cleanDrawOptions, runDrawRequest } from '../lib/draw-utils.js';
 import { waitUntil } from '@vercel/functions';
 
@@ -233,6 +233,12 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       blobUploadError,
       error: undefined,
     });
+    // 图片成功后扣费 0.3 元；扣费失败不阻塞成功状态
+    if (persistentImageUrl) {
+      try {
+        await chargeUser(redis, task.owner, COST_DRAW);
+      } catch {}
+    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     try {
@@ -290,6 +296,18 @@ export default async function handler(req, res) {
   const options = cleanDrawOptions(body);
   if (!options.prompt) {
     sendJson(res, 400, { error: '请输入图片描述' });
+    return;
+  }
+
+  // 余额预检
+  const balance = await getUserBalance(redis, auth.username);
+  if (balance < COST_DRAW - 0.0001) {
+    sendJson(res, 402, {
+      error: '余额不足，请充值后再画图',
+      code: 'INSUFFICIENT_BALANCE',
+      balance,
+      cost: COST_DRAW,
+    });
     return;
   }
 

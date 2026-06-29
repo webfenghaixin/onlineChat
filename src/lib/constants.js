@@ -18,6 +18,11 @@ export const DRAW_REFERENCE_MAX_BYTES = 1.5 * 1024 * 1024;
 export const DRAW_REFERENCE_MIN_QUALITY = 0.55;
 export const DRAW_MAX_IMAGES = 100;
 
+// 余额系统（与服务端 api/lib/auth-utils.js 保持一致）
+export const COST_CHAT = 0.05;
+export const COST_DRAW = 0.3;
+export const BALANCE_RECHARGE_PRESETS = [5, 10, 20, 50];
+
 export const FONT_SIZE_OPTIONS = [
   { value: 'md', label: '标准' },
   { value: 'lg', label: '大字' },

@@ -145,6 +145,42 @@ function createProxyPlugin(env) {
   };
 }
 
+/**
+ * 移除 animal-island-ui 中 3 个 Noto Sans SC 简体中文 @font-face 声明
+ * 每个约 1.15MB，总计 ~3.5MB；项目已使用系统字体，这些字体完全多余
+ */
+function stripChineseFontsPlugin() {
+  const FONT_FACE_RE = /@font-face\s*\{[^}]*noto-sans-sc-chinese-simplified[^}]*\}/g;
+  return {
+    name: 'strip-chinese-fonts',
+    enforce: 'pre',
+    transform(code, id) {
+      if (!id.endsWith('.css')) return null;
+      if (!code.includes('noto-sans-sc-chinese-simplified')) return null;
+      const stripped = code.replace(FONT_FACE_RE, '');
+      if (stripped === code) return null;
+      return { code: stripped, map: null };
+    },
+    generateBundle(_options, bundle) {
+      for (const [fileName, chunk] of Object.entries(bundle)) {
+        if (fileName.includes('noto-sans-sc-chinese-simplified')) {
+          delete bundle[fileName];
+          continue;
+        }
+        if (fileName.endsWith('.css') && chunk.type === 'asset') {
+          const source =
+            typeof chunk.source === 'string'
+              ? chunk.source
+              : new TextDecoder().decode(chunk.source);
+          if (source.includes('noto-sans-sc-chinese-simplified')) {
+            chunk.source = source.replace(FONT_FACE_RE, '');
+          }
+        }
+      }
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
@@ -152,7 +188,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: './',
-    plugins: [react(), createProxyPlugin(env)],
+    plugins: [react(), createProxyPlugin(env), stripChineseFontsPlugin()],
     server: {
       host: true,
       proxy: {

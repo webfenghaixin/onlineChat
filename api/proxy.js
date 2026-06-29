@@ -2,9 +2,18 @@ export const config = {
   runtime: 'edge',
 };
 
+import {
+  verifyJWT,
+  createRedis,
+  getRedisJson,
+  chargeUser,
+  COST_CHAT,
+} from './lib/auth-utils.js';
+import { waitUntil } from '@vercel/functions';
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type, X-Source, X-Model',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Source, X-Model, Authorization',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -38,6 +47,21 @@ function isGeminiModel(model) {
   return String(model || '').toLowerCase().startsWith(GEMINI_MODEL_PREFIX);
 }
 
+async function authenticateEdge(request) {
+  const authHeader = request.headers.get('Authorization') || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  if (!token) return { error: jsonResponse(401, { error: '未登录，请重新登录' }) };
+
+  const jwtSecret = process.env.JWT_SECRET || '';
+  if (!jwtSecret) return { error: jsonResponse(500, { error: '服务端未配置 JWT_SECRET' }) };
+
+  const payload = await verifyJWT(token, jwtSecret);
+  if (!payload || !payload.username) {
+    return { error: jsonResponse(401, { error: '登录已过期，请重新登录' }) };
+  }
+  return { username: payload.username };
+}
+
 export default async function handler(request) {
   if (request.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -45,6 +69,25 @@ export default async function handler(request) {
 
   if (request.method !== 'POST') {
     return jsonResponse(405, { error: 'Only POST is allowed.' });
+  }
+
+  // 鉴权
+  const auth = await authenticateEdge(request);
+  if (auth.error) return auth.error;
+
+  // 余额预检：低于单次费用直接拒绝
+  const redis = createRedis();
+  if (redis) {
+    const user = await getRedisJson(redis, `user:${auth.username}`);
+    const balance = Number.isFinite(Number(user?.balance)) ? Number(user.balance) : 0;
+    if (balance < COST_CHAT - 0.0001) {
+      return jsonResponse(402, {
+        error: '余额不足',
+        code: 'INSUFFICIENT_BALANCE',
+        balance,
+        cost: COST_CHAT,
+      });
+    }
   }
 
   const source = (request.headers.get('x-source') || 'luxee').toLowerCase();
@@ -125,6 +168,14 @@ export default async function handler(request) {
     const cacheControl = upstreamResponse.headers.get('cache-control');
     if (cacheControl) {
       responseHeaders['Cache-Control'] = cacheControl;
+    }
+
+    // 仅当上游返回 2xx 时扣费；失败/错误响应不扣费
+    if (upstreamResponse.ok && redis && auth.username) {
+      const username = auth.username;
+      waitUntil(
+        chargeUser(redis, username, COST_CHAT).catch(() => {}),
+      );
     }
 
     if (!upstreamResponse.body) {

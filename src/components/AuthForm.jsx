@@ -3,6 +3,9 @@ import { Button, Card, Divider, Input, Title } from 'animal-island-ui';
 import { VITE_INVITE_CODE } from '../lib/constants';
 import { login, register } from '../lib/auth';
 
+const TERMS_TEXT = '本人确认本工具仅用于学习交流用途，不用于任何违法违规场景，使用过程中产生的内容由本人自行承担责任。';
+const TERMS_AGREED_KEY = 'lightchat_terms_agreed';
+
 export default function AuthForm({
   authTab,
   setAuthTab,
@@ -18,6 +21,13 @@ export default function AuthForm({
 }) {
   const isRegister = authTab === 'register';
   const [showPassword, setShowPassword] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(() => {
+    try {
+      return localStorage.getItem(TERMS_AGREED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
 
   function handleFieldFocus(event) {
     window.setTimeout(() => {
@@ -28,6 +38,11 @@ export default function AuthForm({
   async function handleAuthSubmit(event) {
     event.preventDefault();
     setAuthError('');
+
+    if (!agreedToTerms) {
+      setAuthError('请先阅读并同意使用条款');
+      return;
+    }
 
     if (isRegister && VITE_INVITE_CODE && authForm.inviteCode !== VITE_INVITE_CODE) {
       setAuthError('邀请码不正确');
@@ -43,6 +58,7 @@ export default function AuthForm({
         await login(authForm.username, authForm.password);
       }
 
+      try { localStorage.setItem(TERMS_AGREED_KEY, '1'); } catch { /* ignore */ }
       setCurrentUser(authForm.username);
       setAuthForm({ username: '', password: '', inviteCode: '' });
       setAuthLoadingActive(true);
@@ -51,6 +67,16 @@ export default function AuthForm({
       setAuthError(error.message || '操作失败');
     } finally {
       setAuthLoading(false);
+    }
+  }
+
+  function toggleTerms() {
+    const next = !agreedToTerms;
+    setAgreedToTerms(next);
+    if (next) {
+      try { localStorage.setItem(TERMS_AGREED_KEY, '1'); } catch { /* ignore */ }
+    } else {
+      try { localStorage.removeItem(TERMS_AGREED_KEY); } catch { /* ignore */ }
     }
   }
 
@@ -161,12 +187,32 @@ export default function AuthForm({
             )}
           </div>
 
+          <label className="terms-checkbox">
+            <input
+              type="checkbox"
+              checked={agreedToTerms}
+              onChange={toggleTerms}
+              className="terms-checkbox-input"
+            />
+            <span className="terms-checkbox-box" aria-hidden="true">
+              {agreedToTerms && (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="2.5 6 5 8.5 9.5 3.5" />
+                </svg>
+              )}
+            </span>
+            <span className="terms-checkbox-text">
+              <span className="terms-checkbox-label">我同意以下条款</span>
+              <span className="terms-checkbox-body">{TERMS_TEXT}</span>
+            </span>
+          </label>
+
           <Button
             type="primary"
             size="large"
             block
             loading={authLoading}
-            disabled={authLoading}
+            disabled={authLoading || !agreedToTerms}
             htmlType="submit"
           >
             {isRegister ? '注册账号' : '进入 lightChat'}

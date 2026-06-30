@@ -16,8 +16,8 @@ export default function BalanceBar({ balance, onRecharge, cost }) {
     <div className={classNames('balance-bar', low && 'balance-bar-low')}>
       <span className="balance-bar-text">
         {low
-          ? `余额不足：剩余 ¥${display}（聊天 ¥${COST_CHAT} / 制图 ¥${COST_DRAW}）`
-          : `余额 ¥${display}（聊天 ¥${COST_CHAT} / 制图 ¥${COST_DRAW}）`}
+          ? `余额不足：剩余 ¥${display}（聊天 ¥${COST_CHAT}/条 · 制图 ¥${COST_DRAW}/张）`
+          : `余额 ¥${display}（聊天 ¥${COST_CHAT}/条 · 制图 ¥${COST_DRAW}/张）`}
       </span>
       <Button
         type={low ? 'primary' : 'default'}

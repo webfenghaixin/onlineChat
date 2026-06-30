@@ -53,11 +53,11 @@ export const DRAW_MODEL_OPTIONS = [
 ];
 
 export const DRAW_SIZE_OPTIONS = [
-  { value: '1024x1024', label: '1K · 1:1 方图' },
-  { value: '1024x1536', label: '1K · 2:3 竖图' },
-  { value: '1024x1792', label: '1K · 9:16 全屏' },
-  { value: '1536x1024', label: '1K · 3:2 横图' },
-  { value: '1792x1024', label: '1K · 16:9 宽屏' },
+  { value: '1024x1024', label: '1:1 方图' },
+  { value: '1024x1536', label: '2:3 竖图' },
+  { value: '1024x1792', label: '9:16 全屏' },
+  { value: '1536x1024', label: '3:2 横图' },
+  { value: '1792x1024', label: '16:9 宽屏' },
 ];
 
 export const DRAW_QUALITY_OPTIONS = [

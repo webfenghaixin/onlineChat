@@ -128,7 +128,7 @@ export default function DrawPage({
     return opt?.disabled ? 'GPT-Image-2' : (opt?.label || 'GPT-Image-2');
   })();
   const currentSizeLabel =
-    DRAW_SIZE_OPTIONS.find((opt) => opt.value === (settings.drawSize || '1024x1792'))?.label || '1K · 9:16 全屏';
+    DRAW_SIZE_OPTIONS.find((opt) => opt.value === (settings.drawSize || '1024x1792'))?.label || '9:16 全屏';
 
   return (
     <div className="draw-page">

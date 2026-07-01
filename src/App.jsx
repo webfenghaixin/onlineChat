@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, lazy } from 'react';
 import { streamChatCompletion, generateImage, pollDrawTask } from './lib/stream';
-import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername, fetchBalance, rechargeBalance } from './lib/auth';
+import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername, fetchBalance, rechargeBalance, fetchConversation, fetchDrawConversation } from './lib/auth';
 import { DRAW_MAX_IMAGES, COST_CHAT, COST_DRAW, BALANCE_RECHARGE_PRESETS } from './lib/constants';
 import {
   classNames,
@@ -17,20 +17,76 @@ import {
   buildConversationTitle,
   buildCopyText,
   resolveDrawDurationSeconds,
+  normalizeMessage,
 } from './lib/utils';
 
 import AuthLoading from './components/AuthLoading';
-import AuthForm from './components/AuthForm';
 import Drawer from './components/Drawer';
 import ChatHeader from './components/ChatHeader';
 import MessageRow from './components/MessageRow';
 import Scrollbar from './components/Scrollbar';
 import Composer from './components/Composer';
-import DrawPage from './components/DrawPage';
 import ConfirmDialog from './components/ConfirmDialog';
 import BalanceBar from './components/BalanceBar';
-import RechargeDialog from './components/RechargeDialog';
-import { Button, Card, Divider, Footer, Title } from 'animal-island-ui';
+import { Button, Card, Divider, Footer, Loading, Title } from 'animal-island-ui';
+
+const AuthForm = lazy(() => import('./components/AuthForm'));
+const DrawPage = lazy(() => import('./components/DrawPage'));
+const RechargeDialog = lazy(() => import('./components/RechargeDialog'));
+
+function mergeCloudData(localData, cloudData) {
+  if (!cloudData || !cloudData.settings) {
+    return localData;
+  }
+
+  const normalized = normalizeState(cloudData);
+  const localConvsById = new Map((localData.conversations || []).map((c) => [c.id, c]));
+
+  const mergedConversations = normalized.conversations.map((cloudConv) => {
+    if (cloudConv.messages && cloudConv.messages.length > 0) {
+      return cloudConv;
+    }
+    const localConv = localConvsById.get(cloudConv.id);
+    if (localConv && localConv.messages && localConv.messages.length > 0) {
+      return {
+        ...cloudConv,
+        messages: localConv.messages,
+        messageCount: Math.max(cloudConv.messageCount || 0, localConv.messages.length),
+      };
+    }
+    return cloudConv;
+  });
+
+  const localDrawConvsById = new Map((localData.drawConversations || []).map((c) => [c.id, c]));
+
+  const mergedDrawConversations = normalized.drawConversations.map((cloudConv) => {
+    if (cloudConv.messages && cloudConv.messages.length > 0) {
+      return cloudConv;
+    }
+    const localConv = localDrawConvsById.get(cloudConv.id);
+    if (localConv && localConv.messages && localConv.messages.length > 0) {
+      return {
+        ...cloudConv,
+        messages: localConv.messages,
+        messageCount: Math.max(cloudConv.messageCount || 0, localConv.messages.length),
+        imageCount: Math.max(cloudConv.imageCount || 0, localConv.messages.filter((m) => m.role === 'assistant' && m.imageUrl).length),
+      };
+    }
+    return cloudConv;
+  });
+
+  const localConvIds = new Set((localData.conversations || []).map((c) => c.id));
+  const newConversations = mergedConversations.filter((c) => localConvIds.has(c.id) || c.messages.length > 0);
+  const localOnlyConvs = (localData.conversations || []).filter((c) => !localConvIds.has(c.id));
+
+  return {
+    settings: normalized.settings,
+    conversations: newConversations,
+    activeConversationId: normalized.activeConversationId,
+    drawConversations: mergedDrawConversations,
+    activeDrawConversationId: normalized.activeDrawConversationId,
+  };
+}
 
 export default function App() {
   const loadedState = useMemo(() => loadState(), []);
@@ -74,6 +130,8 @@ export default function App() {
   const [balance, setBalance] = useState(null);
   const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false);
   const [rechargeLoading, setRechargeLoading] = useState(false);
+  const [convLoading, setConvLoading] = useState(false);
+  const [drawConvLoading, setDrawConvLoading] = useState(false);
 
   const abortControllerRef = useRef(null);
   const drawAbortControllerRef = useRef(null);
@@ -87,6 +145,7 @@ export default function App() {
   const drawFileInputRef = useRef(null);
   const resumedDrawTasksRef = useRef(new Set());
   const activeDrawTaskIdsRef = useRef(new Set());
+  const loadingConvRef = useRef(null);
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
@@ -100,10 +159,91 @@ export default function App() {
     (c) => c.id === activeDrawConversationId,
   ) || drawConversations[0] || null;
   const activeDrawMessages = activeDrawConversation?.messages || [];
-  const drawImageCount = drawConversations.reduce(
-    (sum, c) => sum + c.messages.filter((m) => m.role === 'assistant' && m.imageUrl).length,
-    0,
-  );
+  const drawImageCount = useMemo(() => {
+    let count = 0;
+    for (const c of drawConversations) {
+      if (typeof c.imageCount === 'number' && c.messages.length === 0) {
+        count += c.imageCount;
+      } else {
+        count += c.messages.filter((m) => m.role === 'assistant' && m.imageUrl).length;
+      }
+    }
+    return count;
+  }, [drawConversations]);
+
+  const loadConversationMessages = useCallback(async (conversationId) => {
+    const conv = conversations.find((c) => c.id === conversationId);
+    if (conv && conv.messages && conv.messages.length > 0) {
+      return;
+    }
+    if (loadingConvRef.current === conversationId) return;
+    loadingConvRef.current = conversationId;
+    setConvLoading(true);
+    try {
+      const data = await fetchConversation(conversationId);
+      if (data.messages) {
+        const normalizedMessages = data.messages.map((m) => normalizeMessage(m, data.updatedAt));
+        setConversations((current) =>
+          current.map((c) =>
+            c.id === conversationId
+              ? { ...c, messages: normalizedMessages, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalizedMessages.length }
+              : c,
+          ),
+        );
+      }
+    } catch {
+      setErrorText('加载对话失败，请重试');
+    } finally {
+      setConvLoading(false);
+      loadingConvRef.current = null;
+    }
+  }, [conversations]);
+
+  const loadDrawConversationMessages = useCallback(async (conversationId) => {
+    const conv = drawConversations.find((c) => c.id === conversationId);
+    if (conv && conv.messages && conv.messages.length > 0) {
+      return;
+    }
+    setDrawConvLoading(true);
+    try {
+      const data = await fetchDrawConversation(conversationId);
+      if (data.messages) {
+        const normalizedMessages = data.messages.map((m) => normalizeMessage(m, data.updatedAt));
+        setDrawConversations((current) =>
+          current.map((c) =>
+            c.id === conversationId
+              ? { ...c, messages: normalizedMessages, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalizedMessages.length, imageCount: normalizedMessages.filter((m) => m.role === 'assistant' && m.imageUrl).length }
+              : c,
+          ),
+        );
+      }
+    } catch {
+      setErrorText('加载画图记录失败，请重试');
+    } finally {
+      setDrawConvLoading(false);
+    }
+  }, [drawConversations]);
+
+  const switchConversation = useCallback((conversationId) => {
+    setActiveConversationId(conversationId);
+    setDrawerOpen(false);
+    const conv = conversations.find((c) => c.id === conversationId);
+    if (conv && (!conv.messages || conv.messages.length === 0)) {
+      loadConversationMessages(conversationId);
+    }
+  }, [conversations, loadConversationMessages]);
+
+  const switchDrawConversation = useCallback((conversationId) => {
+    setActiveDrawConversationId(conversationId);
+    setDrawDrawerOpen(false);
+    setErrorText('');
+    setDrawSelectMode(false);
+    setDrawSelectedMessageIds(new Set());
+    const conv = drawConversations.find((c) => c.id === conversationId);
+    if (conv && (!conv.messages || conv.messages.length === 0)) {
+      loadDrawConversationMessages(conversationId);
+    }
+  }, [drawConversations, loadDrawConversationMessages]);
 
   // 修正 activeDrawConversationId 如果指向的对话已被删除
   useEffect(() => {
@@ -113,6 +253,15 @@ export default function App() {
       setActiveDrawConversationId(null);
     }
   }, [drawConversations, activeDrawConversationId]);
+
+  useEffect(() => {
+    if (drawConversations.length > 0 && activeDrawConversationId) {
+      const conv = drawConversations.find((c) => c.id === activeDrawConversationId);
+      if (conv && (!conv.messages || conv.messages.length === 0) && !drawConvLoading) {
+        loadDrawConversationMessages(activeDrawConversationId);
+      }
+    }
+  }, [activeDrawConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 切换对话时重置可见消息数
   useEffect(() => {
@@ -207,12 +356,12 @@ export default function App() {
       .then((data) => {
         if (cancelled) return;
         if (data.settings) {
-          const normalized = normalizeState(data);
-          setSettings(normalized.settings);
-          setConversations(normalized.conversations);
-          setActiveConversationId(normalized.activeConversationId);
-          setDrawConversations(normalized.drawConversations);
-          setActiveDrawConversationId(normalized.activeDrawConversationId);
+          const merged = mergeCloudData(loadedState, data);
+          setSettings(merged.settings);
+          setConversations(merged.conversations);
+          setActiveConversationId(merged.activeConversationId);
+          setDrawConversations(merged.drawConversations);
+          setActiveDrawConversationId(merged.activeDrawConversationId);
         }
         setAuthLoadingActive(false);
         settleTimer = window.setTimeout(() => {
@@ -236,7 +385,7 @@ export default function App() {
       cancelled = true;
       if (settleTimer) window.clearTimeout(settleTimer);
     };
-  }, [authState]);
+  }, [authState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!isGenerating) {
@@ -258,7 +407,8 @@ export default function App() {
 
     const pendingTasks = [];
     for (const conversation of drawConversations) {
-      for (const message of conversation.messages || []) {
+      if (!conversation.messages || conversation.messages.length === 0) continue;
+      for (const message of conversation.messages) {
         if (
           message.role === 'assistant' &&
           message.taskId &&
@@ -293,7 +443,7 @@ export default function App() {
           const durationSeconds = resolveDrawDurationSeconds(taskTiming, task.createdAt);
           updateDrawConversation(task.conversationId, (conv) => ({
             ...conv,
-            messages: conv.messages.map((message) =>
+            messages: (conv.messages || []).map((message) =>
               message.id === task.messageId
                 ? { ...message, imageUrl, error: undefined, durationSeconds }
                 : message,
@@ -304,7 +454,7 @@ export default function App() {
         if (error.name === 'AbortError') return;
         updateDrawConversation(task.conversationId, (conv) => ({
           ...conv,
-          messages: conv.messages.map((message) =>
+          messages: (conv.messages || []).map((message) =>
             message.id === task.messageId
               ? { ...message, error: error.message || '图片生成失败，请稍后重试。' }
               : message,
@@ -474,10 +624,12 @@ export default function App() {
         }
 
         const nextConversation = updater(conversation);
+        const msgs = nextConversation.messages || [];
         return {
           ...nextConversation,
-          title: buildConversationTitle(nextConversation.messages),
+          title: buildConversationTitle(msgs),
           updatedAt: Date.now(),
+          messageCount: msgs.length,
         };
       }),
     );
@@ -504,7 +656,11 @@ export default function App() {
       const remaining = current.filter((item) => item.id !== conversationId);
       if (remaining.length) {
         if (conversationId === activeConversationId) {
-          setActiveConversationId(remaining[0].id);
+          const nextActive = remaining[0];
+          setActiveConversationId(nextActive.id);
+          if (!nextActive.messages || nextActive.messages.length === 0) {
+            loadConversationMessages(nextActive.id);
+          }
         }
         return remaining;
       }
@@ -530,11 +686,15 @@ export default function App() {
     setDrawPendingImage(null);
     setDrawSelectMode(false);
     setDrawSelectedMessageIds(new Set());
-    // If no active draw conversation, create one
     if (!activeDrawConversationId || !drawConversations.find((c) => c.id === activeDrawConversationId)) {
       const conv = createDrawConversation();
       setDrawConversations([conv]);
       setActiveDrawConversationId(conv.id);
+    } else {
+      const conv = drawConversations.find((c) => c.id === activeDrawConversationId);
+      if (conv && (!conv.messages || conv.messages.length === 0)) {
+        loadDrawConversationMessages(activeDrawConversationId);
+      }
     }
   }
 
@@ -576,7 +736,11 @@ export default function App() {
       const remaining = current.filter((item) => item.id !== conversationId);
       if (remaining.length) {
         if (conversationId === activeDrawConversationId) {
-          setActiveDrawConversationId(remaining[0].id);
+          const nextActive = remaining[0];
+          setActiveDrawConversationId(nextActive.id);
+          if (!nextActive.messages || nextActive.messages.length === 0) {
+            loadDrawConversationMessages(nextActive.id);
+          }
         }
         return remaining;
       }
@@ -595,24 +759,32 @@ export default function App() {
       current.map((conv) => {
         if (conv.id !== conversationId) return conv;
         const next = updater(conv);
-        return { ...next, updatedAt: Date.now() };
+        const msgs = next.messages || [];
+        return {
+          ...next,
+          updatedAt: Date.now(),
+          messageCount: msgs.length,
+          imageCount: msgs.filter((m) => m.role === 'assistant' && m.imageUrl).length,
+        };
       }),
     );
   }
 
   function enforceDrawLimit() {
     setDrawConversations((current) => {
-      let totalImages = current.reduce(
-        (sum, c) => sum + c.messages.filter((m) => m.role === 'assistant' && m.imageUrl).length,
-        0,
-      );
+      let totalImages = 0;
+      for (const c of current) {
+        if (typeof c.imageCount === 'number' && (!c.messages || c.messages.length === 0)) {
+          totalImages += c.imageCount;
+        } else {
+          totalImages += (c.messages || []).filter((m) => m.role === 'assistant' && m.imageUrl).length;
+        }
+      }
       if (totalImages <= 20) return current;
 
-      // Need to remove oldest images
-      const result = current.map((c) => ({ ...c, messages: [...c.messages] }));
+      const result = current.map((c) => ({ ...c, messages: [...(c.messages || [])] }));
 
       while (totalImages > 20 && result.length > 0) {
-        // Find the conversation with the oldest assistant image message
         let oldestConvIdx = -1;
         let oldestMsgIdx = -1;
         let oldestTime = Infinity;
@@ -630,18 +802,15 @@ export default function App() {
 
         if (oldestConvIdx < 0) break;
 
-        // Remove the oldest image message and its preceding user message
         const conv = result[oldestConvIdx];
         conv.messages.splice(oldestMsgIdx, 1);
-        // Also remove the user prompt right before it
         if (oldestMsgIdx > 0 && conv.messages[oldestMsgIdx - 1].role === 'user') {
           conv.messages.splice(oldestMsgIdx - 1, 1);
         }
         totalImages--;
       }
 
-      // Remove empty conversations
-      return result.filter((c) => c.messages.length > 0);
+      return result.filter((c) => (c.messages || []).length > 0);
     });
   }
 
@@ -671,14 +840,12 @@ export default function App() {
       return;
     }
 
-    // 余额预检
     if (balance !== null && balance < COST_DRAW - 0.0001) {
       setErrorText(`余额不足，制图需要 ${COST_DRAW} 元，当前余额 ${balance.toFixed(2)} 元`);
       setRechargeDialogOpen(true);
       return;
     }
 
-    // Check limit
     if (drawImageCount >= DRAW_MAX_IMAGES) {
       setDrawLimitWarning(true);
     }
@@ -721,8 +888,8 @@ export default function App() {
 
     updateDrawConversation(targetConvId, (conv) => ({
       ...conv,
-      title: conv.messages.length === 0 ? prompt.slice(0, 18) : conv.title,
-      messages: [...conv.messages, userMessage, assistantMessage],
+      title: (conv.messages || []).length === 0 ? prompt.slice(0, 18) : conv.title,
+      messages: [...(conv.messages || []), userMessage, assistantMessage],
     }));
 
     setDrawPrompt('');
@@ -731,6 +898,8 @@ export default function App() {
     const controller = new AbortController();
     drawAbortControllerRef.current = controller;
     let currentTaskId = '';
+
+    const activeConv = drawConversations.find((c) => c.id === targetConvId);
 
     try {
       await generateImage({
@@ -742,8 +911,8 @@ export default function App() {
         signal: controller.signal,
         taskMetadata: {
           conversationId: targetConvId,
-          conversationTitle: activeDrawConversation?.id === targetConvId
-            ? activeDrawConversation.title
+          conversationTitle: activeConv?.id === targetConvId
+            ? activeConv.title
             : prompt.slice(0, 18),
           activeDrawConversationId: targetConvId,
           userMessage: userMessage.referenceImage
@@ -756,7 +925,7 @@ export default function App() {
           activeDrawTaskIdsRef.current.add(taskId);
           updateDrawConversation(targetConvId, (conv) => ({
             ...conv,
-            messages: conv.messages.map((m) =>
+            messages: (conv.messages || []).map((m) =>
               m.id === assistantMessage.id ? { ...m, taskId } : m,
             ),
           }));
@@ -765,11 +934,10 @@ export default function App() {
           const durationSeconds = resolveDrawDurationSeconds(taskTiming, now);
           updateDrawConversation(targetConvId, (conv) => ({
             ...conv,
-            messages: conv.messages.map((m) =>
+            messages: (conv.messages || []).map((m) =>
               m.id === assistantMessage.id ? { ...m, imageUrl, durationSeconds, error: undefined } : m,
             ),
           }));
-          // Enforce 20 image limit (auto-replace oldest)
           enforceDrawLimit();
         },
       });
@@ -780,24 +948,21 @@ export default function App() {
         const nextErrorText = error.message || '图片生成失败，请重试。';
         setErrorText(nextErrorText);
         setStatusText('图片生成失败');
-        // 余额不足或扣费失败时刷新余额并弹充值框
         if (error.code === 'INSUFFICIENT_BALANCE' || error.status === 402) {
           refreshBalance();
           setRechargeDialogOpen(true);
         }
-        // Update the assistant message with error
         updateDrawConversation(targetConvId, (conv) => ({
           ...conv,
-          messages: conv.messages.map((m) =>
+          messages: (conv.messages || []).map((m) =>
             m.id === assistantMessage.id ? { ...m, error: nextErrorText } : m,
           ),
         }));
       } else {
         setStatusText('图片生成已停止');
-        // Remove the incomplete messages
         updateDrawConversation(targetConvId, (conv) => ({
           ...conv,
-          messages: conv.messages.filter((m) => m.id !== userMessage.id && m.id !== assistantMessage.id),
+          messages: (conv.messages || []).filter((m) => m.id !== userMessage.id && m.id !== assistantMessage.id),
         }));
       }
     } finally {
@@ -808,7 +973,6 @@ export default function App() {
         activeDrawTaskIdsRef.current.delete(currentTaskId);
       }
       setIsGenerating(false);
-      // 异步刷新余额（扣费在图片成功后执行）
       refreshBalance();
     }
   }
@@ -857,10 +1021,10 @@ export default function App() {
     if (!deleteDrawTarget) return;
     const { conversationId, messageId } = deleteDrawTarget;
     updateDrawConversation(conversationId, (conv) => {
-      const idx = conv.messages.findIndex((m) => m.id === messageId);
+      const msgs = conv.messages || [];
+      const idx = msgs.findIndex((m) => m.id === messageId);
       if (idx < 0) return conv;
-      const newMessages = [...conv.messages];
-      // If this is an assistant message, also remove the preceding user message
+      const newMessages = [...msgs];
       if (newMessages[idx].role === 'assistant' && idx > 0 && newMessages[idx - 1].role === 'user') {
         newMessages.splice(idx - 1, 2);
       } else if (newMessages[idx].role === 'user' && idx + 1 < newMessages.length && newMessages[idx + 1].role === 'assistant') {
@@ -870,8 +1034,7 @@ export default function App() {
       }
       return { ...conv, messages: newMessages };
     });
-    // Clean up empty conversations
-    setDrawConversations((current) => current.filter((c) => c.messages.length > 0));
+    setDrawConversations((current) => current.filter((c) => (c.messages || []).length > 0));
     setDeleteDrawTarget(null);
   }
 
@@ -883,7 +1046,6 @@ export default function App() {
     const userText = getTextParts(userMessage.content).trim();
     if (!userText) return;
 
-    // 将用户消息内容填入输入框，方便重新编辑
     setDraft(userText);
     composerRef.current?.focus();
   }
@@ -932,7 +1094,6 @@ export default function App() {
       return;
     }
 
-    // 余额预检
     if (balance !== null && balance < COST_CHAT - 0.0001) {
       setErrorText(`余额不足，聊天需要 ${COST_CHAT} 元，当前余额 ${balance.toFixed(2)} 元`);
       setRechargeDialogOpen(true);
@@ -1016,7 +1177,6 @@ export default function App() {
         const nextErrorText = error.message || '请求失败，请检查接口地址或密钥。';
         setErrorText(nextErrorText);
         setStatusText('请求失败');
-        // 余额不足或扣费失败时刷新余额并弹充值框
         if (error.code === 'INSUFFICIENT_BALANCE' || error.status === 402) {
           refreshBalance();
           setRechargeDialogOpen(true);
@@ -1033,9 +1193,7 @@ export default function App() {
     } finally {
       abortControllerRef.current = null;
       setIsSending(false);
-      // 异步刷新余额（扣费在响应开始时执行）
       refreshBalance();
-      // 回答完成提示
       setShowCompleteHint(true);
       setTimeout(() => setShowCompleteHint(false), 3000);
     }
@@ -1160,25 +1318,26 @@ export default function App() {
 
     updateDrawConversation(activeDrawConversation.id, (conversation) => {
       const removableIds = new Set(drawSelectedMessageIds);
-      conversation.messages.forEach((message, index) => {
+      const msgs = conversation.messages || [];
+      msgs.forEach((message, index) => {
         if (!drawSelectedMessageIds.has(message.id)) return;
 
         if (message.role === 'user') {
-          const nextMessage = conversation.messages[index + 1];
+          const nextMessage = msgs[index + 1];
           if (nextMessage?.role === 'assistant') {
             removableIds.add(nextMessage.id);
           }
         }
 
         if (message.role === 'assistant') {
-          const previousMessage = conversation.messages[index - 1];
+          const previousMessage = msgs[index - 1];
           if (previousMessage?.role === 'user') {
             removableIds.add(previousMessage.id);
           }
         }
       });
 
-      const remainingMessages = conversation.messages.filter((message) => !removableIds.has(message.id));
+      const remainingMessages = msgs.filter((message) => !removableIds.has(message.id));
       return {
         ...conversation,
         title: remainingMessages.length ? conversation.title : '新的画图',
@@ -1238,19 +1397,21 @@ export default function App() {
 
   if (authState === 'auth-form') {
     return (
-      <AuthForm
-        authTab={authTab}
-        setAuthTab={setAuthTab}
-        authForm={authForm}
-        setAuthForm={setAuthForm}
-        authError={authError}
-        setAuthError={setAuthError}
-        authLoading={authLoading}
-        setAuthLoading={setAuthLoading}
-        setAuthState={setAuthState}
-        setAuthLoadingActive={setAuthLoadingActive}
-        setCurrentUser={setCurrentUser}
-      />
+      <Suspense fallback={<div className="auth-loading-overlay"><div className="auth-loading-fill"><Loading active /></div></div>}>
+        <AuthForm
+          authTab={authTab}
+          setAuthTab={setAuthTab}
+          authForm={authForm}
+          setAuthForm={setAuthForm}
+          authError={authError}
+          setAuthError={setAuthError}
+          authLoading={authLoading}
+          setAuthLoading={setAuthLoading}
+          setAuthState={setAuthState}
+          setAuthLoadingActive={setAuthLoadingActive}
+          setCurrentUser={setCurrentUser}
+        />
+      </Suspense>
     );
   }
 
@@ -1269,7 +1430,7 @@ export default function App() {
         setDrawerTab={setDrawerTab}
         conversations={conversations}
         activeConversationId={activeConversationId}
-        setActiveConversationId={setActiveConversationId}
+        switchConversation={switchConversation}
         setDeleteConversationTarget={setDeleteConversationTarget}
         createNewConversation={createNewConversation}
         settings={settings}
@@ -1310,6 +1471,12 @@ export default function App() {
 
         <div className="message-list-wrapper">
           <section className="message-list" ref={messageListRef} aria-live="polite">
+            {convLoading && visibleMessages.length === 0 && (
+              <div className="conv-loading-hint">
+                <Loading active />
+                <span>加载对话中...</span>
+              </div>
+            )}
             {hasMoreMessages && (
               <div className="load-more-bar">
                 <Button
@@ -1321,7 +1488,7 @@ export default function App() {
                 </Button>
               </div>
             )}
-            {visibleMessages.length === 0 && !isSending && (
+            {visibleMessages.length === 0 && !isSending && !convLoading && (
               <div className="empty-state">
                 <Card className="welcome-panel" type="dashed" pattern="default">
                   <div className="welcome-label">岛上广播</div>
@@ -1407,62 +1574,67 @@ export default function App() {
       </main>
 
       {drawMode && (
-        <DrawPage
-          settings={settings}
-          setSettings={setSettings}
-          drawConversations={drawConversations}
-          activeDrawConversationId={activeDrawConversationId}
-          setActiveDrawConversationId={setActiveDrawConversationId}
-          activeDrawConversation={activeDrawConversation}
-          activeDrawMessages={activeDrawMessages}
-          drawImageCount={drawImageCount}
-          isGenerating={isGenerating}
-          drawElapsedSeconds={drawElapsedSeconds}
-          drawPrompt={drawPrompt}
-          setDrawPrompt={setDrawPrompt}
-          drawPendingImage={drawPendingImage}
-          setDrawPendingImage={setDrawPendingImage}
-          drawDrawerOpen={drawDrawerOpen}
-          setDrawDrawerOpen={setDrawDrawerOpen}
-          drawSelectMode={drawSelectMode}
-          drawSelectedMessageIds={drawSelectedMessageIds}
-          errorText={errorText}
-          setErrorText={setErrorText}
-          drawLimitWarning={drawLimitWarning}
-          setDrawLimitWarning={setDrawLimitWarning}
-          deleteDrawTarget={deleteDrawTarget}
-          setDeleteDrawTarget={setDeleteDrawTarget}
-          deleteDrawConversationTarget={deleteDrawConversationTarget}
-          setDeleteDrawConversationTarget={setDeleteDrawConversationTarget}
-          closeDrawMode={closeDrawMode}
-          createNewDrawConversation={createNewDrawConversation}
-          removeDrawConversation={removeDrawConversation}
-          stopDrawGeneration={stopDrawGeneration}
-          handleDraw={handleDraw}
-          downloadImage={downloadImage}
-          requestDeleteDrawMessage={requestDeleteDrawMessage}
-          cancelDeleteDrawMessage={cancelDeleteDrawMessage}
-          confirmDeleteDrawMessage={confirmDeleteDrawMessage}
-          exitDrawSelectMode={exitDrawSelectMode}
-          enterDrawSelectMode={enterDrawSelectMode}
-          toggleDrawMessageSelection={toggleDrawMessageSelection}
-          selectAllDrawUserMessages={selectAllDrawUserMessages}
-          selectAllDrawAssistantMessages={selectAllDrawAssistantMessages}
-          deleteSelectedDrawMessages={deleteSelectedDrawMessages}
-          drawFileInputRef={drawFileInputRef}
-          authState={authState}
-          balance={balance}
-          onRecharge={() => setRechargeDialogOpen(true)}
-        />
+        <Suspense fallback={null}>
+          <DrawPage
+            settings={settings}
+            setSettings={setSettings}
+            drawConversations={drawConversations}
+            activeDrawConversationId={activeDrawConversationId}
+            switchDrawConversation={switchDrawConversation}
+            activeDrawConversation={activeDrawConversation}
+            activeDrawMessages={activeDrawMessages}
+            drawImageCount={drawImageCount}
+            isGenerating={isGenerating}
+            drawElapsedSeconds={drawElapsedSeconds}
+            drawPrompt={drawPrompt}
+            setDrawPrompt={setDrawPrompt}
+            drawPendingImage={drawPendingImage}
+            setDrawPendingImage={setDrawPendingImage}
+            drawDrawerOpen={drawDrawerOpen}
+            setDrawDrawerOpen={setDrawDrawerOpen}
+            drawSelectMode={drawSelectMode}
+            drawSelectedMessageIds={drawSelectedMessageIds}
+            errorText={errorText}
+            setErrorText={setErrorText}
+            drawLimitWarning={drawLimitWarning}
+            setDrawLimitWarning={setDrawLimitWarning}
+            deleteDrawTarget={deleteDrawTarget}
+            setDeleteDrawTarget={setDeleteDrawTarget}
+            deleteDrawConversationTarget={deleteDrawConversationTarget}
+            setDeleteDrawConversationTarget={setDeleteDrawConversationTarget}
+            closeDrawMode={closeDrawMode}
+            createNewDrawConversation={createNewDrawConversation}
+            removeDrawConversation={removeDrawConversation}
+            stopDrawGeneration={stopDrawGeneration}
+            handleDraw={handleDraw}
+            downloadImage={downloadImage}
+            requestDeleteDrawMessage={requestDeleteDrawMessage}
+            cancelDeleteDrawMessage={cancelDeleteDrawMessage}
+            confirmDeleteDrawMessage={confirmDeleteDrawMessage}
+            exitDrawSelectMode={exitDrawSelectMode}
+            enterDrawSelectMode={enterDrawSelectMode}
+            toggleDrawMessageSelection={toggleDrawMessageSelection}
+            selectAllDrawUserMessages={selectAllDrawUserMessages}
+            selectAllDrawAssistantMessages={selectAllDrawAssistantMessages}
+            deleteSelectedDrawMessages={deleteSelectedDrawMessages}
+            drawFileInputRef={drawFileInputRef}
+            authState={authState}
+            balance={balance}
+            onRecharge={() => setRechargeDialogOpen(true)}
+            drawConvLoading={drawConvLoading}
+          />
+        </Suspense>
       )}
 
-      <RechargeDialog
-        visible={rechargeDialogOpen}
-        balance={balance}
-        loading={rechargeLoading}
-        onRecharge={handleRecharge}
-        onCancel={() => setRechargeDialogOpen(false)}
-      />
+      <Suspense fallback={null}>
+        <RechargeDialog
+          visible={rechargeDialogOpen}
+          balance={balance}
+          loading={rechargeLoading}
+          onRecharge={handleRecharge}
+          onCancel={() => setRechargeDialogOpen(false)}
+        />
+      </Suspense>
 
       {authState === 'loading' && <AuthLoading active={authLoadingActive} />}
     </div>

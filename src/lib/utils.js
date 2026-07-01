@@ -131,7 +131,7 @@ export function createDrawConversation() {
   };
 }
 
-function normalizeMessage(message, fallbackTimestamp) {
+export function normalizeMessage(message, fallbackTimestamp) {
   const rawContent = Array.isArray(message?.content)
     ? message.content
     : typeof message?.content === 'string'
@@ -150,27 +150,53 @@ function normalizeMessage(message, fallbackTimestamp) {
 
 export function normalizeState(parsed) {
   const initialConversation = createConversation();
+
+  const normalizeConversation = (conv, fallbackIdx) => {
+    const messages = Array.isArray(conv?.messages) ? conv.messages : [];
+    const hasMessages = messages.length > 0;
+    return {
+      ...conv,
+      id: conv?.id || createId(),
+      title: conv?.title || '新的对话',
+      updatedAt: conv?.updatedAt || Date.now(),
+      messageCount: typeof conv?.messageCount === 'number' ? conv.messageCount : messages.length,
+      lastPreview: conv?.lastPreview || '',
+      messages: hasMessages
+        ? messages.map((message) => normalizeMessage(message, conv.updatedAt))
+        : [],
+    };
+  };
+
+  const normalizeDrawConversation = (conv) => {
+    const messages = Array.isArray(conv?.messages) ? conv.messages : [];
+    const hasMessages = messages.length > 0;
+    return {
+      ...conv,
+      id: conv?.id || createId(),
+      title: conv?.title || '新的画图',
+      updatedAt: conv?.updatedAt || Date.now(),
+      messageCount: typeof conv?.messageCount === 'number' ? conv.messageCount : messages.length,
+      imageCount: typeof conv?.imageCount === 'number'
+        ? conv.imageCount
+        : messages.filter((m) => m.role === 'assistant' && m.imageUrl).length,
+      messages: hasMessages
+        ? messages.map((message) => normalizeMessage(message, conv.updatedAt))
+        : [],
+    };
+  };
+
   const conversations =
     Array.isArray(parsed?.conversations) && parsed.conversations.length
-      ? parsed.conversations.map((conversation) => ({
-          ...conversation,
-          id: conversation?.id || createId(),
-          messages: (conversation.messages || []).map((message) =>
-            normalizeMessage(message, conversation.updatedAt),
-          ),
-        }))
+      ? parsed.conversations.map((conv, i) => normalizeConversation(conv, i))
       : [initialConversation];
 
   const drawConversations =
     Array.isArray(parsed?.drawConversations) && parsed.drawConversations.length
-      ? parsed.drawConversations.map((conversation) => ({
-          ...conversation,
-          id: conversation?.id || createId(),
-          messages: (conversation.messages || []).map((message) =>
-            normalizeMessage(message, conversation.updatedAt),
-          ),
-        }))
+      ? parsed.drawConversations.map((conv) => normalizeDrawConversation(conv))
       : [];
+
+  const activeConversationId = parsed?.activeConversationId || conversations[0].id;
+  const activeDrawConversationId = parsed?.activeDrawConversationId || (drawConversations[0]?.id ?? null);
 
   return {
     settings: normalizeModelSettings({
@@ -178,9 +204,9 @@ export function normalizeState(parsed) {
       ...(parsed?.settings || {}),
     }),
     conversations,
-    activeConversationId: parsed?.activeConversationId || conversations[0].id,
+    activeConversationId,
     drawConversations,
-    activeDrawConversationId: parsed?.activeDrawConversationId || (drawConversations[0]?.id ?? null),
+    activeDrawConversationId,
   };
 }
 
@@ -199,6 +225,24 @@ export function loadState() {
 
 export function saveState(state) {
   try {
+    const cleanedConversations = state.conversations.map((conversation) => ({
+      ...conversation,
+      messages: (conversation.messages || []).map((message) => {
+        if (Array.isArray(message.content)) {
+          return {
+            ...message,
+            content: message.content.map((part) => {
+              if (part?.type === 'image_url' && part.image_url?.url && part.image_url.url.startsWith('data:')) {
+                return null;
+              }
+              return part;
+            }).filter(Boolean),
+          };
+        }
+        return message;
+      }),
+    }));
+
     const cleanedDrawConversations = state.drawConversations.map((conversation) => ({
       ...conversation,
       messages: conversation.messages.map((message) => {
@@ -212,7 +256,7 @@ export function saveState(state) {
 
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ ...state, drawConversations: cleanedDrawConversations }),
+      JSON.stringify({ ...state, conversations: cleanedConversations, drawConversations: cleanedDrawConversations }),
     );
   } catch {
     // localStorage may be full or unavailable in some embedded browsers.

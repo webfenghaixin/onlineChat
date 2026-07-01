@@ -97,6 +97,16 @@ export async function loadFromCloud() {
   return data;
 }
 
+export async function fetchConversation(conversationId) {
+  const data = await apiRequest(resolveApiUrl(`/api/data/conversation?id=${encodeURIComponent(conversationId)}`));
+  return data;
+}
+
+export async function fetchDrawConversation(conversationId) {
+  const data = await apiRequest(resolveApiUrl(`/api/data/draw-conversation?id=${encodeURIComponent(conversationId)}`));
+  return data;
+}
+
 export async function fetchBalance() {
   const data = await apiRequest(resolveApiUrl('/api/balance'), { method: 'GET' });
   return data;

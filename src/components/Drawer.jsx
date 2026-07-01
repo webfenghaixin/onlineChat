@@ -9,7 +9,7 @@ export default function Drawer({
   setDrawerTab,
   conversations,
   activeConversationId,
-  setActiveConversationId,
+  switchConversation,
   setDeleteConversationTarget,
   createNewConversation,
   settings,
@@ -73,13 +73,12 @@ export default function Drawer({
                       className="history-main"
                       type="button"
                       onClick={() => {
-                        setActiveConversationId(conversation.id);
-                        setDrawerOpen(false);
+                        switchConversation(conversation.id);
                       }}
                     >
                       <span className="history-title">{conversation.title}</span>
                       <span className="history-time">
-                        {conversation.messages.length} 条消息 · {formatDateTime(conversation.updatedAt)}
+                        {conversation.messageCount || conversation.messages.length} 条消息 · {formatDateTime(conversation.updatedAt)}
                       </span>
                     </button>
                     <Button

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Card, Collapse, Select, Divider } from 'animal-island-ui';
+import { Button, Card, Collapse, Select, Divider, Loading } from 'animal-island-ui';
 import {
   classNames,
   formatTime,
@@ -26,7 +26,7 @@ export default function DrawPage({
   setSettings,
   drawConversations,
   activeDrawConversationId,
-  setActiveDrawConversationId,
+  switchDrawConversation,
   activeDrawConversation,
   activeDrawMessages,
   drawImageCount,
@@ -67,6 +67,7 @@ export default function DrawPage({
   authState,
   balance,
   onRecharge,
+  drawConvLoading,
 }) {
   const [copiedId, setCopiedId] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
@@ -164,15 +165,12 @@ export default function DrawPage({
                     className="history-main"
                     type="button"
                     onClick={() => {
-                      setActiveDrawConversationId(conv.id);
-                      setErrorText('');
-                      exitDrawSelectMode();
-                      setDrawDrawerOpen(false);
+                      switchDrawConversation(conv.id);
                     }}
                   >
                     <span className="history-title">{conv.title}</span>
                     <span className="history-time">
-                      {conv.messages.filter((m) => m.imageUrl).length} 张图 · {formatDateTime(conv.updatedAt)}
+                      {conv.imageCount || conv.messages.filter((m) => m.imageUrl).length} 张图 · {formatDateTime(conv.updatedAt)}
                     </span>
                   </button>
                   <Button
@@ -272,7 +270,14 @@ export default function DrawPage({
             )}
             {errorText && <div className="error-banner">{errorText}</div>}
 
-            {activeDrawConversation?.messages.length === 0 && !isGenerating && (
+            {drawConvLoading && activeDrawMessages.length === 0 && (
+              <div className="conv-loading-hint">
+                <Loading active />
+                <span>加载画图记录中...</span>
+              </div>
+            )}
+
+            {!drawConvLoading && activeDrawConversation?.messages.length === 0 && !isGenerating && (
               <div className="draw-empty">
                 <Card className="draw-empty-card" type="dashed" color="app-yellow">
                   <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

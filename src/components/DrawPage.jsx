@@ -159,7 +159,6 @@ export default function DrawPage({
                 <Card
                   key={conv.id}
                   className={classNames('history-card', conv.id === activeDrawConversationId && 'history-card-active')}
-                  color={conv.id === activeDrawConversationId ? 'app-teal' : 'default'}
                 >
                   <button
                     className="history-main"

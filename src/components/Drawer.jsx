@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button, Card, Input, Select, Divider } from 'animal-island-ui';
 import { FONT_SIZE_OPTIONS, MODEL_OPTIONS } from '../lib/constants';
 import { formatDateTime, normalizeModelSettings } from '../lib/utils';
+import { changePassword } from '../lib/auth';
 
 export default function Drawer({
   drawerOpen,
@@ -37,6 +38,45 @@ export default function Drawer({
     }).catch(() => {
       setVconsoleLoading(false);
     });
+  }
+
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' });
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [passwordMsg, setPasswordMsg] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+
+  async function handleSubmitPassword() {
+    setPasswordMsg('');
+    setPasswordError('');
+
+    if (!passwordForm.oldPassword || !passwordForm.newPassword) {
+      setPasswordError('请输入旧密码和新密码');
+      return;
+    }
+    if (passwordForm.newPassword.length < 6) {
+      setPasswordError('新密码至少 6 位');
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError('两次输入的新密码不一致');
+      return;
+    }
+
+    setPasswordLoading(true);
+    try {
+      await changePassword(passwordForm.oldPassword, passwordForm.newPassword);
+      setPasswordMsg('密码修改成功');
+      setPasswordForm({ oldPassword: '', newPassword: '', confirmPassword: '' });
+      setTimeout(() => {
+        setShowPasswordForm(false);
+        setPasswordMsg('');
+      }, 1500);
+    } catch (error) {
+      setPasswordError(error.message || '修改失败');
+    } finally {
+      setPasswordLoading(false);
+    }
   }
 
   return (
@@ -86,7 +126,6 @@ export default function Drawer({
                   <Card
                     key={conversation.id}
                     className={`history-card ${conversation.id === activeConversationId ? 'history-card-active' : ''}`}
-                    color={conversation.id === activeConversationId ? 'app-teal' : 'default'}
                   >
                     <button
                       className="history-main"
@@ -185,6 +224,66 @@ export default function Drawer({
                 />
               </div>
             </div>
+
+            <Divider type="wave-yellow" />
+
+            {showPasswordForm ? (
+              <div className="password-form">
+                <div className="field">
+                  <span className="field-label">旧密码</span>
+                  <Input
+                    type="password"
+                    value={passwordForm.oldPassword}
+                    onChange={(e) => setPasswordForm((p) => ({ ...p, oldPassword: e.target.value }))}
+                    placeholder="输入旧密码"
+                  />
+                </div>
+                <div className="field">
+                  <span className="field-label">新密码</span>
+                  <Input
+                    type="password"
+                    value={passwordForm.newPassword}
+                    onChange={(e) => setPasswordForm((p) => ({ ...p, newPassword: e.target.value }))}
+                    placeholder="至少 6 位"
+                  />
+                </div>
+                <div className="field">
+                  <span className="field-label">确认新密码</span>
+                  <Input
+                    type="password"
+                    value={passwordForm.confirmPassword}
+                    onChange={(e) => setPasswordForm((p) => ({ ...p, confirmPassword: e.target.value }))}
+                    placeholder="再次输入新密码"
+                  />
+                </div>
+                {passwordError && <div className="field-error">{passwordError}</div>}
+                {passwordMsg && <div className="field-success">{passwordMsg}</div>}
+                <Button
+                  type="primary"
+                  block
+                  loading={passwordLoading}
+                  onClick={handleSubmitPassword}
+                >
+                  确认修改
+                </Button>
+                <Button
+                  type="text"
+                  block
+                  onClick={() => { setShowPasswordForm(false); setPasswordError(''); setPasswordMsg(''); }}
+                >
+                  取消
+                </Button>
+              </div>
+            ) : (
+              <Button
+                className="drawer-password-button"
+                type="default"
+                block
+                onClick={() => setShowPasswordForm(true)}
+              >
+                修改密码
+              </Button>
+            )}
 
             <Button
               className="drawer-debug-button"

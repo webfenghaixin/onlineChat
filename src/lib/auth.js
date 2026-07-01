@@ -51,6 +51,11 @@ async function apiRequest(url, options = {}) {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    // 401 表示登录已过期，清除 token 并通知应用跳回登录页
+    if (response.status === 401) {
+      clearToken();
+      window.dispatchEvent(new CustomEvent('auth:unauthorized'));
+    }
     const err = new Error(data.error || `请求失败 (${response.status})`);
     err.status = response.status;
     err.code = data.code;
@@ -77,6 +82,14 @@ export async function login(username, password) {
   });
   setToken(data.token, data.username);
   return data;
+}
+
+export async function changePassword(oldPassword, newPassword) {
+  await apiRequest(resolveApiUrl('/api/auth/change-password'), {
+    method: 'POST',
+    body: JSON.stringify({ oldPassword, newPassword }),
+  });
+  return true;
 }
 
 export async function saveToCloud(state) {

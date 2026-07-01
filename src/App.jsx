@@ -142,6 +142,7 @@ export default function App() {
   const cloudSaveTimerRef = useRef(null);
   const programmaticScrollRef = useRef(false);
   const cloudSavingRef = useRef(false);
+  const cloudLoadingRef = useRef(false);
   const drawFileInputRef = useRef(null);
   const resumedDrawTasksRef = useRef(new Set());
   const activeDrawTaskIdsRef = useRef(new Set());
@@ -348,13 +349,19 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (authState !== 'loading') return;
-    let cancelled = false;
+    if (authState !== 'loading') {
+      // 离开 loading 状态，重置标记，允许下次登录重新加载
+      cloudLoadingRef.current = false;
+      return;
+    }
+    // 用 ref 去重，避免 StrictMode 双挂载导致 loadFromCloud 被调用两次
+    if (cloudLoadingRef.current) return;
+    cloudLoadingRef.current = true;
+
     let settleTimer = null;
     setAuthLoadingActive(true);
     loadFromCloud()
       .then((data) => {
-        if (cancelled) return;
         if (data.settings) {
           const merged = mergeCloudData(loadedState, data);
           setSettings(merged.settings);
@@ -365,24 +372,20 @@ export default function App() {
         }
         setAuthLoadingActive(false);
         settleTimer = window.setTimeout(() => {
-          if (cancelled) return;
           setAuthState('authenticated');
         }, 900);
         fetchBalance()
-          .then((r) => { if (!cancelled) setBalance(r.balance); })
+          .then((r) => setBalance(r.balance))
           .catch(() => {});
       })
       .catch(() => {
-        if (cancelled) return;
         clearToken();
         setAuthLoadingActive(false);
         settleTimer = window.setTimeout(() => {
-          if (cancelled) return;
           setAuthState('auth-form');
         }, 900);
       });
     return () => {
-      cancelled = true;
       if (settleTimer) window.clearTimeout(settleTimer);
     };
   }, [authState]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1356,6 +1359,19 @@ export default function App() {
     setStatusText('已退出登录');
   }
 
+  // 监听 401 事件，自动跳回登录页
+  useEffect(() => {
+    function onUnauthorized() {
+      setCurrentUser('');
+      setAuthState('auth-form');
+      setDrawerOpen(false);
+      setDrawMode(false);
+      setErrorText('登录已过期，请重新登录');
+    }
+    window.addEventListener('auth:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
+  }, []);
+
   function handleUploadClick() {
     if (authState !== 'authenticated') {
       return;
@@ -1574,7 +1590,13 @@ export default function App() {
       </main>
 
       {drawMode && (
-        <Suspense fallback={null}>
+        <Suspense
+          fallback={
+            <div className="draw-page draw-page-skeleton">
+              <Loading active />
+            </div>
+          }
+        >
           <DrawPage
             settings={settings}
             setSettings={setSettings}

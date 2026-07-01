@@ -6,6 +6,14 @@ import { login, register } from '../lib/auth';
 const TERMS_TEXT = '本人确认本工具仅用于学习交流用途，不用于任何违法违规场景，使用过程中产生的内容由本人自行承担责任。';
 const TERMS_AGREED_KEY = 'lightchat_terms_agreed';
 
+function loadVConsole() {
+  if (window.__VCONSOLE_LOADED__) return;
+  import('vconsole').then((mod) => {
+    new mod.default();
+    window.__VCONSOLE_LOADED__ = true;
+  }).catch(() => {});
+}
+
 export default function AuthForm({
   authTab,
   setAuthTab,
@@ -87,6 +95,9 @@ export default function AuthForm({
 
   return (
     <div className="gate-shell">
+      <button className="gate-debug-button" type="button" onClick={loadVConsole}>
+        调试
+      </button>
       <div className="gate-orb gate-orb-left" aria-hidden="true" />
       <div className="gate-orb gate-orb-right" aria-hidden="true" />
 

@@ -25,20 +25,16 @@ export default async function handler(request) {
     return jsonResponse(400, { error: '缺少对话ID参数' });
   }
 
-  const data = await getRedisJson(redis, `data:${auth.username}`);
-  if (!data || !Array.isArray(data.conversations)) {
-    return jsonResponse(404, { error: '对话不存在' });
-  }
+  const data = await getRedisJson(redis, `data:${auth.username}:conv:${conversationId}`);
 
-  const conversation = data.conversations.find((c) => c.id === conversationId);
-  if (!conversation) {
+  if (!data || !Array.isArray(data.messages)) {
     return jsonResponse(404, { error: '对话不存在' });
   }
 
   return jsonResponse(200, {
-    id: conversation.id,
-    title: conversation.title,
-    updatedAt: conversation.updatedAt,
-    messages: conversation.messages || [],
+    id: data.id,
+    title: data.title,
+    updatedAt: data.updatedAt,
+    messages: data.messages,
   });
 }

@@ -9,14 +9,24 @@ import {
   setRedisJson,
 } from '../lib/auth-utils.js';
 
+function buildLastPreview(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant' || messages[i].role === 'user') {
+      const content = Array.isArray(messages[i].content)
+        ? messages[i].content.filter((p) => p?.type === 'text').map((p) => p.text).join(' ')
+        : (typeof messages[i].content === 'string' ? messages[i].content : '');
+      return content.slice(0, 40);
+    }
+  }
+  return '';
+}
+
 function mergeDrawMessage(incomingMessage, existingMessage) {
   if (!incomingMessage || !existingMessage) return incomingMessage;
   if (incomingMessage.role !== 'assistant' || existingMessage.role !== 'assistant') {
     return incomingMessage;
   }
-
   const imageUrl = incomingMessage.imageUrl || existingMessage.imageUrl || '';
-
   return {
     ...incomingMessage,
     imageUrl,
@@ -27,31 +37,6 @@ function mergeDrawMessage(incomingMessage, existingMessage) {
         ? incomingMessage.durationSeconds
         : existingMessage.durationSeconds,
   };
-}
-
-function mergeDrawConversations(incomingConversations = [], existingConversations = []) {
-  if (!Array.isArray(incomingConversations)) return [];
-  if (!Array.isArray(existingConversations) || !existingConversations.length) {
-    return incomingConversations;
-  }
-
-  const existingById = new Map(existingConversations.map((conversation) => [conversation.id, conversation]));
-
-  return incomingConversations.map((incomingConversation) => {
-    const existingConversation = existingById.get(incomingConversation.id);
-    if (!existingConversation) return incomingConversation;
-
-    const existingMessagesById = new Map(
-      (existingConversation.messages || []).map((message) => [message.id, message]),
-    );
-
-    return {
-      ...incomingConversation,
-      messages: (incomingConversation.messages || []).map((message) =>
-        mergeDrawMessage(message, existingMessagesById.get(message.id)),
-      ),
-    };
-  });
 }
 
 export default async function handler(request) {
@@ -77,19 +62,131 @@ export default async function handler(request) {
     return jsonResponse(400, { error: '数据格式错误' });
   }
 
-  const dataKey = `data:${auth.username}`;
-  const existingData = (await getRedisJson(redis, dataKey)) || {};
-  const mergedDrawConversations = mergeDrawConversations(
-    drawConversations || [],
-    existingData.drawConversations || [],
-  );
+  const username = auth.username;
+  const metaKey = `data:${username}:meta`;
+  const existingMeta = (await getRedisJson(redis, metaKey)) || {};
 
-  await setRedisJson(redis, dataKey, {
-    conversations,
+  // --- 清理已删除对话的分 key ---
+  const incomingConvIds = new Set(conversations.map((c) => c.id));
+  const incomingDrawConvIds = new Set((drawConversations || []).map((c) => c.id));
+  const existingConvIds = new Set((existingMeta.conversations || []).map((c) => c.id));
+  const existingDrawConvIds = new Set((existingMeta.drawConversations || []).map((c) => c.id));
+
+  const deletePromises = [];
+  for (const oldId of existingConvIds) {
+    if (!incomingConvIds.has(oldId)) {
+      deletePromises.push(redis.del(`data:${username}:conv:${oldId}`));
+    }
+  }
+  for (const oldId of existingDrawConvIds) {
+    if (!incomingDrawConvIds.has(oldId)) {
+      deletePromises.push(redis.del(`data:${username}:draw:${oldId}`));
+    }
+  }
+  if (deletePromises.length) await Promise.all(deletePromises);
+
+  // --- 保存有消息的聊天对话到分 key ---
+  const existingConvMeta = new Map((existingMeta.conversations || []).map((c) => [c.id, c]));
+  const convSummaries = [];
+  const convWritePromises = [];
+
+  for (const conv of conversations) {
+    const msgs = conv.messages || [];
+    if (msgs.length > 0) {
+      convWritePromises.push(
+        setRedisJson(redis, `data:${username}:conv:${conv.id}`, {
+          id: conv.id,
+          title: conv.title,
+          updatedAt: conv.updatedAt || Date.now(),
+          messages: msgs,
+        }),
+      );
+      convSummaries.push({
+        id: conv.id,
+        title: conv.title || '新的对话',
+        updatedAt: conv.updatedAt || Date.now(),
+        messageCount: msgs.length,
+        lastPreview: buildLastPreview(msgs),
+      });
+    } else {
+      // 未加载消息的对话，保留 meta 中已有的摘要
+      const existing = existingConvMeta.get(conv.id);
+      convSummaries.push(existing || {
+        id: conv.id,
+        title: conv.title || '新的对话',
+        updatedAt: conv.updatedAt || Date.now(),
+        messageCount: 0,
+        lastPreview: '',
+      });
+    }
+  }
+  if (convWritePromises.length) await Promise.all(convWritePromises);
+
+  // --- 保存有消息的画图对话到分 key（带 merge 逻辑） ---
+  const existingDrawMeta = new Map((existingMeta.drawConversations || []).map((c) => [c.id, c]));
+  const drawConvSummaries = [];
+
+  // 先读取需要 merge 的画图对话
+  const drawConvIdsWithMessages = (drawConversations || [])
+    .filter((conv) => (conv.messages || []).length > 0)
+    .map((conv) => conv.id);
+
+  const existingDrawDataMap = new Map();
+  if (drawConvIdsWithMessages.length) {
+    const existingDrawResults = await Promise.all(
+      drawConvIdsWithMessages.map((id) => getRedisJson(redis, `data:${username}:draw:${id}`)),
+    );
+    drawConvIdsWithMessages.forEach((id, i) => {
+      if (existingDrawResults[i]) existingDrawDataMap.set(id, existingDrawResults[i]);
+    });
+  }
+
+  const drawWritePromises = [];
+  for (const conv of (drawConversations || [])) {
+    const msgs = conv.messages || [];
+    if (msgs.length > 0) {
+      // merge 保留画图任务状态（imageUrl/taskId 等）
+      const existing = existingDrawDataMap.get(conv.id);
+      let messagesToSave = msgs;
+      if (existing && Array.isArray(existing.messages)) {
+        const existingById = new Map(existing.messages.map((m) => [m.id, m]));
+        messagesToSave = msgs.map((m) => mergeDrawMessage(m, existingById.get(m.id)));
+      }
+      drawWritePromises.push(
+        setRedisJson(redis, `data:${username}:draw:${conv.id}`, {
+          id: conv.id,
+          title: conv.title,
+          updatedAt: conv.updatedAt || Date.now(),
+          messages: messagesToSave,
+        }),
+      );
+      drawConvSummaries.push({
+        id: conv.id,
+        title: conv.title || '新的画图',
+        updatedAt: conv.updatedAt || Date.now(),
+        messageCount: messagesToSave.length,
+        imageCount: messagesToSave.filter((m) => m.role === 'assistant' && m.imageUrl).length,
+      });
+    } else {
+      const existing = existingDrawMeta.get(conv.id);
+      drawConvSummaries.push(existing || {
+        id: conv.id,
+        title: conv.title || '新的画图',
+        updatedAt: conv.updatedAt || Date.now(),
+        messageCount: 0,
+        imageCount: 0,
+      });
+    }
+  }
+  if (drawWritePromises.length) await Promise.all(drawWritePromises);
+
+  // --- 保存 meta ---
+  await setRedisJson(redis, metaKey, {
     settings,
     activeConversationId,
-    drawConversations: mergedDrawConversations,
     activeDrawConversationId: activeDrawConversationId || null,
+    conversations: convSummaries,
+    drawConversations: drawConvSummaries,
     updatedAt: Date.now(),
   });
 

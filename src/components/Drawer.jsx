@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Button, Card, Input, Select, Divider } from 'animal-island-ui';
 import { FONT_SIZE_OPTIONS, MODEL_OPTIONS } from '../lib/constants';
 import { formatDateTime, normalizeModelSettings } from '../lib/utils';
@@ -18,6 +19,24 @@ export default function Drawer({
 }) {
   function switchDrawerTab(nextTab) {
     setDrawerTab(nextTab);
+  }
+
+  const [vconsoleLoading, setVconsoleLoading] = useState(false);
+  function loadVConsole() {
+    if (window.__VCONSOLE_LOADED__) {
+      setDrawerOpen(false);
+      return;
+    }
+    setVconsoleLoading(true);
+    import('vconsole').then((mod) => {
+      const VConsole = mod.default;
+      new VConsole();
+      window.__VCONSOLE_LOADED__ = true;
+      setVconsoleLoading(false);
+      setDrawerOpen(false);
+    }).catch(() => {
+      setVconsoleLoading(false);
+    });
   }
 
   return (
@@ -166,6 +185,16 @@ export default function Drawer({
                 />
               </div>
             </div>
+
+            <Button
+              className="drawer-debug-button"
+              type="dashed"
+              block
+              loading={vconsoleLoading}
+              onClick={loadVConsole}
+            >
+              调试面板 {window.__VCONSOLE_LOADED__ ? '（已开启）' : ''}
+            </Button>
 
             <Button className="drawer-logout-button" type="default" danger block onClick={handleLogout}>
               退出登录

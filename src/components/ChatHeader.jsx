@@ -16,12 +16,11 @@ export default function ChatHeader({
     <header className={classNames('chat-header', selectMode ? 'chat-header-select' : 'chat-header-3col')}>
       {selectMode ? (
         <>
-          <Button className="select-header-button" type="text" size="small" onClick={exitSelectMode}>取消</Button>
+          <Button type="text" size="small" onClick={exitSelectMode}>取消</Button>
           <div className="chat-title">
             <h1>已选 {selectedMessageIds.size} 条</h1>
           </div>
           <Button
-            className="select-header-button"
             type="primary"
             danger
             size="small"
@@ -37,7 +36,6 @@ export default function ChatHeader({
           <Button
             type="default"
             size="small"
-            className="mobile-header-button mobile-header-button-menu"
             onClick={() => openDrawer('history')}
             aria-label="打开侧栏"
           >
@@ -51,7 +49,6 @@ export default function ChatHeader({
           <Button
             type="primary"
             size="small"
-            className="mobile-header-button mobile-draw-button"
             onClick={openDrawMode}
             aria-label="画图"
           >

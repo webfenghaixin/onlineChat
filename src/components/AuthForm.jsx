@@ -226,7 +226,7 @@ export default function AuthForm({
             disabled={authLoading || !agreedToTerms}
             htmlType="submit"
           >
-            {isRegister ? '注册账号' : '进入 lightChat'}
+            {isRegister ? '注册账号' : '登录'}
           </Button>
         </form>
 

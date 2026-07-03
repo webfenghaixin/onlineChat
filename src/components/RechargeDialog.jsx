@@ -26,7 +26,7 @@ export default function RechargeDialog({
       title="充值余额"
       onClose={onCancel}
       typewriter={false}
-      width={420}
+      width={460}
       footer={
         <Button type="text" onClick={onCancel}>关闭</Button>
       }

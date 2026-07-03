@@ -147,6 +147,7 @@ export default function App() {
   const resumedDrawTasksRef = useRef(new Set());
   const activeDrawTaskIdsRef = useRef(new Set());
   const loadingConvRef = useRef(null);
+  const newDrawConvRef = useRef(new Set());
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
@@ -203,6 +204,9 @@ export default function App() {
   const loadDrawConversationMessages = useCallback(async (conversationId) => {
     const conv = drawConversations.find((c) => c.id === conversationId);
     if (conv && conv.messages && conv.messages.length > 0) {
+      return;
+    }
+    if (newDrawConvRef.current.has(conversationId)) {
       return;
     }
     setDrawConvLoading(true);
@@ -722,6 +726,7 @@ export default function App() {
 
   function createNewDrawConversation() {
     const conv = createDrawConversation();
+    newDrawConvRef.current.add(conv.id);
     setDrawConversations((prev) => [conv, ...prev]);
     setActiveDrawConversationId(conv.id);
     setDrawPrompt('');
@@ -735,6 +740,7 @@ export default function App() {
   }
 
   function removeDrawConversation(conversationId) {
+    newDrawConvRef.current.delete(conversationId);
     setDrawConversations((current) => {
       const remaining = current.filter((item) => item.id !== conversationId);
       if (remaining.length) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Card, Collapse, Select, Divider, Loading } from 'animal-island-ui';
+import { Button, Card, Collapse, Select, Divider, Loading, Tabs } from 'animal-island-ui';
 import {
   classNames,
   formatTime,
@@ -71,6 +71,7 @@ export default function DrawPage({
 }) {
   const [copiedId, setCopiedId] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [drawDrawerTab, setDrawDrawerTab] = useState('history');
   const messageListRef = useRef(null);
   const programmaticScrollRef = useRef(false);
 
@@ -131,59 +132,89 @@ export default function DrawPage({
   const currentSizeLabel =
     DRAW_SIZE_OPTIONS.find((opt) => opt.value === (settings.drawSize || '1024x1792'))?.label || '9:16 全屏';
 
+  const drawHistoryPane = (
+    <div className="drawer-tab-content">
+      <Button type="primary" block onClick={createNewDrawConversation}>
+        新建画图
+      </Button>
+      <div className="drawer-history-list">
+        {drawConversations
+          .slice()
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .map((conv) => (
+            <Card
+              key={conv.id}
+              className={classNames('drawer-history-card', conv.id === activeDrawConversationId && 'drawer-history-card-active')}
+            >
+              <button
+                className="drawer-history-main"
+                type="button"
+                onClick={() => {
+                  switchDrawConversation(conv.id);
+                }}
+              >
+                <span className="drawer-history-title">{conv.title}</span>
+                <span className="drawer-history-time">
+                  {conv.imageCount || conv.messages.filter((m) => m.imageUrl).length} 张图 · {formatDateTime(conv.updatedAt)}
+                </span>
+              </button>
+              <Button
+                className="drawer-history-delete"
+                type="text"
+                size="small"
+                danger
+                onClick={() => setDeleteDrawConversationTarget(conv.id)}
+              >
+                删除
+              </Button>
+            </Card>
+          ))}
+      </div>
+    </div>
+  );
+
+  const drawSettingsPane = (
+    <div className="drawer-tab-content drawer-settings-form">
+      <div className="drawer-field">
+        <span className="drawer-field-label">字体大小</span>
+        <Select
+          value={settings.fontSize}
+          onChange={(value) =>
+            setSettings((current) => ({ ...current, fontSize: value }))
+          }
+          options={[
+            { key: 'sm', label: '小' },
+            { key: 'md', label: '中' },
+            { key: 'lg', label: '大' },
+          ]}
+        />
+      </div>
+    </div>
+  );
+
+  const drawTabItems = [
+    { key: 'history', label: '画图', children: drawHistoryPane },
+    { key: 'settings', label: '设置', children: drawSettingsPane },
+  ];
+
   return (
     <div className="draw-page">
       <aside className={classNames('drawer', drawDrawerOpen && 'drawer-open')}>
         <div className="drawer-header">
-          <div className="drawer-brand">
-            <img className="drawer-logo" src="/logo-2.png" alt="" />
-            <div>
-              <div className="drawer-kicker">lightDraw</div>
-              <div className="drawer-title">画图记录</div>
-            </div>
+          <div className="drawer-title-wrap">
+            <div className="drawer-title">lightDraw</div>
           </div>
-          <Button className="drawer-close-button" type="text" size="small" onClick={() => setDrawDrawerOpen(false)}>
+          <Button type="text" size="small" onClick={() => setDrawDrawerOpen(false)}>
             关闭
           </Button>
         </div>
-         <Divider type="wave-yellow" />
-        <div className="history-pane">
-          <Button className="drawer-primary-action" type="primary" block onClick={createNewDrawConversation}>
-            新建画图
-          </Button>
-          <div className="history-list">
-            {drawConversations
-              .slice()
-              .sort((a, b) => b.updatedAt - a.updatedAt)
-              .map((conv) => (
-                <Card
-                  key={conv.id}
-                  className={classNames('history-card', conv.id === activeDrawConversationId && 'history-card-active')}
-                >
-                  <button
-                    className="history-main"
-                    type="button"
-                    onClick={() => {
-                      switchDrawConversation(conv.id);
-                    }}
-                  >
-                    <span className="history-title">{conv.title}</span>
-                    <span className="history-time">
-                      {conv.imageCount || conv.messages.filter((m) => m.imageUrl).length} 张图 · {formatDateTime(conv.updatedAt)}
-                    </span>
-                  </button>
-                  <Button
-                    className="history-delete"
-                    type="text"
-                    size="small"
-                    danger
-                    onClick={() => setDeleteDrawConversationTarget(conv.id)}
-                  >
-                    删除
-                  </Button>
-                </Card>
-              ))}
-          </div>
+        <Divider type="wave-yellow" />
+        <div className="drawer-tabs-wrap">
+          <Tabs
+            activeKey={drawDrawerTab}
+            onChange={(key) => setDrawDrawerTab(key)}
+            items={drawTabItems}
+          />
         </div>
       </aside>
 
@@ -200,14 +231,13 @@ export default function DrawPage({
         <header className={classNames('chat-header', drawSelectMode ? 'chat-header-select' : 'chat-header-3col')}>
           {drawSelectMode ? (
             <>
-              <Button className="select-header-button" type="text" size="small" onClick={exitDrawSelectMode}>
+              <Button type="text" size="small" onClick={exitDrawSelectMode}>
                 取消
               </Button>
               <div className="chat-title">
                 <h1>已选 {drawSelectedMessageIds.size} 条</h1>
               </div>
               <Button
-                className="select-header-button"
                 type="primary"
                 danger
                 size="small"
@@ -221,10 +251,9 @@ export default function DrawPage({
           ) : (
             <>
               <Button
-                className="mobile-header-button mobile-header-button-menu"
                 type="default"
                 size="small"
-                onClick={() => setDrawDrawerOpen(true)}
+                onClick={() => { setDrawDrawerTab('history'); setDrawDrawerOpen(true); }}
                 aria-label="打开侧栏"
               >
                 ☰
@@ -239,7 +268,6 @@ export default function DrawPage({
               </div>
 
               <Button
-                className="mobile-header-button draw-back-button"
                 type="default"
                 size="small"
                 onClick={closeDrawMode}
@@ -572,7 +600,7 @@ export default function DrawPage({
                   )}
                   answer={(
                     <div className="draw-config">
-                      <div className="draw-config-item">
+                      <div className="draw-config-item draw-config-item-model">
                         <span>模型</span>
                         <Select
                           value={(() => {

@@ -21,6 +21,7 @@ export default function Composer({
   pendingImage,
   clearPendingImage,
   handleUploadClick,
+  imageProcessing,
   composerRef,
   fileInputRef,
   handleFileChange,
@@ -76,9 +77,14 @@ export default function Composer({
               type="default"
               size="small"
               onClick={handleUploadClick}
+              disabled={imageProcessing}
               aria-label="上传图片"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              {imageProcessing ? (
+                <span className="upload-button-loading">处理中</span>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              )}
             </Button>
 
             <textarea
@@ -98,7 +104,7 @@ export default function Composer({
                 className="send-button"
                 type="primary"
                 size="small"
-                disabled={!canSend}
+                disabled={!canSend || imageProcessing}
                 onClick={() => sendMessage()}
               >
                 发送

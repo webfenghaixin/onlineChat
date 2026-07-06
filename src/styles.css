@@ -1023,6 +1023,19 @@ button:disabled {
   transform: scale(1.05);
 }
 
+.upload-button:disabled,
+.upload-button[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.upload-button-loading {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
 /* 三列 header（聊天页有画图入口） */
 .chat-header-3col {
   grid-template-columns: 44px minmax(0, 1fr) 44px;

@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState, lazy } fro
 import { streamChatCompletion, generateImage, pollDrawTask } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername, fetchBalance, rechargeBalance, fetchConversation, fetchDrawConversation } from './lib/auth';
 import { DRAW_MAX_IMAGES, COST_CHAT, COST_DRAW, BALANCE_RECHARGE_PRESETS } from './lib/constants';
+import { prepareChatImage } from './lib/image-utils';
 import {
   classNames,
   loadState,
@@ -111,6 +112,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => getStoredUsername());
   const [pendingImage, setPendingImage] = useState(null);
+  const [imageProcessing, setImageProcessing] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
   const [drawPrompt, setDrawPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -1385,32 +1387,34 @@ export default function App() {
     fileInputRef.current?.click();
   }
 
-  function handleFileChange(event) {
+  async function handleFileChange(event) {
     const file = event.target.files?.[0];
+    event.target.value = '';
     if (!file) {
       return;
     }
 
     if (!file.type.startsWith('image/')) {
       setErrorText('只能上传图片文件。');
-      event.target.value = '';
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : '';
+    setImageProcessing(true);
+    setErrorText('');
+    setStatusText('正在处理图片');
+    try {
+      const optimizedUrl = await prepareChatImage(file);
       setPendingImage({
         name: file.name,
-        url: result,
+        url: optimizedUrl,
       });
-      setErrorText('');
-    };
-    reader.onerror = () => {
-      setErrorText('图片读取失败，请重试。');
-    };
-    reader.readAsDataURL(file);
-    event.target.value = '';
+      setStatusText('已就绪');
+    } catch (error) {
+      setErrorText(error.message || '图片处理失败，请重试。');
+      setStatusText('图片处理失败');
+    } finally {
+      setImageProcessing(false);
+    }
   }
 
   function clearPendingImage() {
@@ -1589,6 +1593,7 @@ export default function App() {
           pendingImage={pendingImage}
           clearPendingImage={clearPendingImage}
           handleUploadClick={handleUploadClick}
+          imageProcessing={imageProcessing}
           composerRef={composerRef}
           fileInputRef={fileInputRef}
           handleFileChange={handleFileChange}

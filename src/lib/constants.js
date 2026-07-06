@@ -16,6 +16,13 @@ export const GEMINI_MODEL_ID = 'gemini-3.1-pro';
 export const DRAW_REFERENCE_MAX_DIMENSION = 1536;
 export const DRAW_REFERENCE_MAX_BYTES = 1.5 * 1024 * 1024;
 export const DRAW_REFERENCE_MIN_QUALITY = 0.55;
+
+// 聊天页面上传图片的压缩参数
+// Vercel Serverless Function 请求体上限 4.5MB，base64 编码会膨胀约 33%，
+// 加上对话历史等 payload，单张图片需控制在 2MB 以内
+export const CHAT_IMAGE_MAX_DIMENSION = 1280;
+export const CHAT_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+export const CHAT_IMAGE_MIN_QUALITY = 0.5;
 export const DRAW_MAX_IMAGES = 100;
 
 // 余额系统（与服务端 api/lib/auth-utils.js 保持一致）

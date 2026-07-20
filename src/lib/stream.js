@@ -103,6 +103,40 @@ function normalizeMessageContent(content) {
   ];
 }
 
+// 剥离历史消息中的图片 data URL，只保留最后一条用户消息的图片
+// 用于控制请求体大小，避免 Vercel 4.5MB 限制
+export function stripHistoricalImages(messages, keepLastUserImages = true) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return messages;
+  }
+
+  let lastUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      lastUserIndex = i;
+      break;
+    }
+  }
+
+  return messages.map((message, index) => {
+    if (typeof message.content !== 'object' || !Array.isArray(message.content)) {
+      return message;
+    }
+
+    // 非最后一条用户消息：剥离图片
+    if (!keepLastUserImages || index !== lastUserIndex) {
+      const textOnlyContent = message.content.filter((part) => part?.type !== 'image_url');
+      if (textOnlyContent.length === 0) {
+        return { ...message, content: [{ type: 'text', text: '[图片]' }] };
+      }
+      return { ...message, content: textOnlyContent };
+    }
+
+    // 最后一条用户消息：保留图片
+    return message;
+  });
+}
+
 function extractTextFromEvent(payload) {
   if (!payload || typeof payload !== 'object') {
     return '';
@@ -392,10 +426,11 @@ function parseJsonLinesChunk(buffer, onText) {
 }
 
 export async function streamChatCompletion({ settings, messages, signal, onText }) {
+  const strippedMessages = stripHistoricalImages(messages);
   const response = await fetch(resolveRequestUrl(settings), {
     method: 'POST',
     headers: buildRequestHeaders(settings),
-    body: JSON.stringify(cleanUndefinedValues(buildRequestBody(settings, messages))),
+    body: JSON.stringify(cleanUndefinedValues(buildRequestBody(settings, strippedMessages))),
     signal,
   });
 
@@ -651,7 +686,7 @@ async function readJsonResponse(response) {
 async function generateImageViaTaskApi({
   settings,
   prompt,
-  referenceImage,
+  referenceImages,
   size,
   quality,
   signal,
@@ -668,7 +703,7 @@ async function generateImageViaTaskApi({
       apiMode,
       source: settings.source || 'rightcode',
       prompt,
-      referenceImage,
+      referenceImages: Array.isArray(referenceImages) ? referenceImages : [],
       size: size || '1024x1024',
       quality: quality || 'medium',
       model: settings.drawModel || 'gpt-image-2',
@@ -702,46 +737,60 @@ async function generateImageViaTaskApi({
 export async function pollDrawTask({ settings, taskId, startedAt, signal, onImage }) {
   while (true) {
     await abortableDelay(resolveDrawTaskPollInterval(startedAt), signal);
+    try {
+      const statusUrl = new URL(resolveDrawTaskUrl(settings, 'status'), window.location.origin);
+      statusUrl.searchParams.set('id', taskId);
 
-    const statusUrl = new URL(resolveDrawTaskUrl(settings, 'status'), window.location.origin);
-    statusUrl.searchParams.set('id', taskId);
-
-    const statusResponse = await fetch(statusUrl.toString(), {
-      method: 'GET',
-      headers: getAuthorizedHeaders(),
-      signal,
-    });
-    const statusData = await readJsonResponse(statusResponse);
-
-    if (!statusResponse.ok) {
-      throw new Error(
-        normalizeDrawErrorMessage(
-          statusData.error || `查询绘图任务失败 (${statusResponse.status})`,
-          statusResponse.status,
-        ),
-      );
-    }
-
-    if (statusData.status === 'succeeded' && statusData.imageUrl) {
-      onImage(statusData.imageUrl, {
-        createdAt: statusData.createdAt,
-        completedAt: statusData.completedAt,
+      const statusResponse = await fetch(statusUrl.toString(), {
+        method: 'GET',
+        headers: getAuthorizedHeaders(),
+        signal,
       });
-      return;
-    }
+      const statusData = await readJsonResponse(statusResponse);
 
-    if (statusData.status === 'failed') {
-      throw new Error(normalizeDrawErrorMessage(statusData.error || '图片生成失败，请稍后重试。'));
+      if (!statusResponse.ok) {
+        // Authentication and a missing task cannot recover on their own.
+        // A temporary gateway error must not turn a server-side task into a
+        // client-side failure while the task is still running.
+        if (statusResponse.status === 401 || statusResponse.status === 403 || statusResponse.status === 404) {
+          throw new Error(
+            normalizeDrawErrorMessage(
+              statusData.error || `Task status lookup failed (${statusResponse.status})`,
+              statusResponse.status,
+            ),
+          );
+        }
+        continue;
+      }
+
+      if (statusData.status === 'succeeded' && statusData.imageUrl) {
+        onImage(statusData.imageUrl, {
+          createdAt: statusData.createdAt,
+          completedAt: statusData.completedAt,
+        });
+        return;
+      }
+
+      if (statusData.status === 'failed') {
+        throw new Error(normalizeDrawErrorMessage(statusData.error || 'Task failed.'));
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      // Browser fetch rejections such as "Load failed" only mean this poll
+      // failed. The task lives on the server, so wait for its final state.
+      if (error instanceof TypeError) continue;
+      throw error;
     }
   }
 }
 
 // /v1/images/generations 模式：非流式，直接返回 JSON
-async function generateImageViaImagesApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage }) {
+async function generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage }) {
+  const images = Array.isArray(referenceImages) ? referenceImages.filter(Boolean) : [];
   const body = JSON.stringify({
     model,
     prompt,
-    image: referenceImage ? [referenceImage] : undefined,
+    image: images.length > 0 ? images : undefined,
     size: size || '1024x1024',
     quality: quality || 'medium',
     response_format: 'url',
@@ -769,18 +818,18 @@ async function generateImageViaImagesApi({ url, headers, model, prompt, referenc
 }
 
 // /v1/chat/completions 模式：流式，从文本中提取图片
-async function generateImageViaChatApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage }) {
+async function generateImageViaChatApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage }) {
+  const images = Array.isArray(referenceImages) ? referenceImages.filter(Boolean) : [];
   const sizeHint = size ? `，图片尺寸${size}` : '';
   const qualityHint = quality ? `，画质${quality}` : '';
-  const textPart = referenceImage
-    ? `请参考这张图片，${prompt}${sizeHint}${qualityHint}`
-    : `请根据以下描述生成图片：${prompt}${sizeHint}${qualityHint}`;
+  const refHint = images.length > 0 ? `请参考这${images.length}张图片，` : '请根据以下描述生成图片：';
+  const textPart = `${refHint}${prompt}${sizeHint}${qualityHint}`;
 
   let userContent;
-  if (referenceImage) {
+  if (images.length > 0) {
     userContent = [
       { type: 'text', text: textPart },
-      { type: 'image_url', image_url: { url: referenceImage } },
+      ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
     ];
   } else {
     userContent = textPart;
@@ -892,7 +941,7 @@ async function generateImageViaChatApi({ url, headers, model, prompt, referenceI
 export async function generateImage({
   settings,
   prompt,
-  referenceImage,
+  referenceImages,
   size,
   quality,
   signal,
@@ -906,7 +955,7 @@ export async function generateImage({
     return generateImageViaTaskApi({
       settings,
       prompt,
-      referenceImage,
+      referenceImages,
       size,
       quality,
       signal,
@@ -921,8 +970,8 @@ export async function generateImage({
   const model = settings.drawModel || 'gpt-image-2';
 
   if (apiMode === 'chat') {
-    return generateImageViaChatApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage });
+    return generateImageViaChatApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage });
   }
 
-  return generateImageViaImagesApi({ url, headers, model, prompt, referenceImage, size, quality, signal, onImage });
+  return generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage });
 }

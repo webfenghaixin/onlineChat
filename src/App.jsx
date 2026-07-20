@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, lazy } from 'react';
 import { streamChatCompletion, generateImage, pollDrawTask } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername, fetchBalance, rechargeBalance, fetchConversation, fetchDrawConversation } from './lib/auth';
-import { DRAW_MAX_IMAGES, COST_CHAT, COST_DRAW, BALANCE_RECHARGE_PRESETS } from './lib/constants';
+import { DRAW_MAX_IMAGES, CHAT_MAX_IMAGES, COST_CHAT, COST_DRAW, BALANCE_RECHARGE_PRESETS } from './lib/constants';
 import { prepareChatImage } from './lib/image-utils';
 import {
   classNames,
@@ -111,7 +111,7 @@ export default function App() {
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => getStoredUsername());
-  const [pendingImage, setPendingImage] = useState(null);
+  const [pendingImages, setPendingImages] = useState([]);
   const [imageProcessing, setImageProcessing] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
   const [drawPrompt, setDrawPrompt] = useState('');
@@ -120,7 +120,7 @@ export default function App() {
   const [activeDrawConversationId, setActiveDrawConversationId] = useState(loadedState.activeDrawConversationId);
   const [drawDrawerOpen, setDrawDrawerOpen] = useState(false);
   const [drawLimitWarning, setDrawLimitWarning] = useState(false);
-  const [drawPendingImage, setDrawPendingImage] = useState(null);
+  const [drawPendingImages, setDrawPendingImages] = useState([]);
   const [drawElapsedSeconds, setDrawElapsedSeconds] = useState(0);
   const [deleteDrawTarget, setDeleteDrawTarget] = useState(null);
   const [deleteDrawConversationTarget, setDeleteDrawConversationTarget] = useState(null);
@@ -157,7 +157,7 @@ export default function App() {
   const activeMessages = activeConversation?.messages || [];
   const hasUserMessages = activeMessages.some((message) => message.role === 'user');
   const draftHasText = draft.trim().length > 0;
-  const canSend = (draftHasText || Boolean(pendingImage)) && !isSending && authState === 'authenticated';
+  const canSend = (draftHasText || pendingImages.length > 0) && !isSending && authState === 'authenticated';
 
   const activeDrawConversation = drawConversations.find(
     (c) => c.id === activeDrawConversationId,
@@ -654,7 +654,7 @@ export default function App() {
     setConversations((current) => [conversation, ...current]);
     setActiveConversationId(conversation.id);
     setDraft('');
-    setPendingImage(null);
+    setPendingImages([]);
     setErrorText('');
     setStatusText('已创建新对话');
     setDrawerOpen(false);
@@ -692,7 +692,7 @@ export default function App() {
     setDrawPrompt('');
     setErrorText('');
     setDrawLimitWarning(false);
-    setDrawPendingImage(null);
+    setDrawPendingImages([]);
     setDrawSelectMode(false);
     setDrawSelectedMessageIds(new Set());
     if (!activeDrawConversationId || !drawConversations.find((c) => c.id === activeDrawConversationId)) {
@@ -712,7 +712,7 @@ export default function App() {
     setErrorText('');
     setDrawDrawerOpen(false);
     setDrawLimitWarning(false);
-    setDrawPendingImage(null);
+    setDrawPendingImages([]);
     setDrawSelectMode(false);
     setDrawSelectedMessageIds(new Set());
     setStatusText('已就绪');
@@ -734,7 +734,7 @@ export default function App() {
     setDrawPrompt('');
     setErrorText('');
     setDrawLimitWarning(false);
-    setDrawPendingImage(null);
+    setDrawPendingImages([]);
     setDrawSelectMode(false);
     setDrawSelectedMessageIds(new Set());
     setDrawElapsedSeconds(0);
@@ -851,22 +851,74 @@ export default function App() {
       return;
     }
 
+    const referenceImages = drawPendingImages.map((img) => img.url).filter(Boolean);
+    await _executeDraw({
+      prompt,
+      referenceImages,
+      targetConvId: activeDrawConversationId,
+      model: settings.drawModel || 'gpt-image-2',
+      size: settings.drawSize || '1024x1024',
+      quality: settings.drawQuality || 'medium',
+    });
+  }
+
+  async function retryDraw(userMessageId) {
+    const conv = drawConversations.find((c) => c.id === activeDrawConversationId);
+    if (!conv || !conv.messages) return;
+
+    const userMsg = conv.messages.find((m) => m.id === userMessageId);
+    if (!userMsg) return;
+
+    const referenceImages = Array.isArray(userMsg.referenceImages) && userMsg.referenceImages.length > 0
+      ? userMsg.referenceImages
+      : userMsg.referenceImage
+        ? [userMsg.referenceImage]
+        : [];
+
+    await _executeDraw({
+      prompt: userMsg.content || '',
+      referenceImages,
+      targetConvId: conv.id,
+      model: userMsg.model || settings.drawModel || 'gpt-image-2',
+      size: userMsg.size || settings.drawSize || '1024x1024',
+      quality: userMsg.quality || settings.drawQuality || 'medium',
+    });
+  }
+
+  function editDrawMessage(userMessageId) {
+    const conv = drawConversations.find((c) => c.id === activeDrawConversationId);
+    if (!conv || !conv.messages) return;
+
+    const userMsg = conv.messages.find((m) => m.id === userMessageId);
+    if (!userMsg) return;
+
+    setDrawPrompt(userMsg.content || '');
+
+    const referenceImages = Array.isArray(userMsg.referenceImages) && userMsg.referenceImages.length > 0
+      ? userMsg.referenceImages
+      : userMsg.referenceImage
+        ? [userMsg.referenceImage]
+        : [];
+
+    setDrawPendingImages(referenceImages.map((url, i) => ({ name: `参考图${i + 1}`, url })));
+  }
+
+  async function _executeDraw({ prompt, referenceImages, targetConvId, model, size, quality }) {
+    if (!prompt || isGenerating || authState !== 'authenticated') return;
+
     if (balance !== null && balance < COST_DRAW - 0.0001) {
       setErrorText(`余额不足，制图需要 ${COST_DRAW} 元，当前余额 ${balance.toFixed(2)} 元`);
       setRechargeDialogOpen(true);
       return;
     }
 
-    if (drawImageCount >= DRAW_MAX_IMAGES) {
-      setDrawLimitWarning(true);
-    }
+    if (drawImageCount >= DRAW_MAX_IMAGES) setDrawLimitWarning(true);
 
     setErrorText('');
     setIsGenerating(true);
     setDrawElapsedSeconds(0);
     setStatusText('正在生成图片');
 
-    let targetConvId = activeDrawConversationId;
     if (!targetConvId || !drawConversations.find((c) => c.id === targetConvId)) {
       const conv = createDrawConversation();
       setDrawConversations((prev) => [conv, ...prev]);
@@ -879,10 +931,11 @@ export default function App() {
       id: createId(),
       role: 'user',
       content: prompt,
-      referenceImage: drawPendingImage?.url || null,
-      model: settings.drawModel || 'gpt-image-2',
-      size: settings.drawSize || '1024x1024',
-      quality: settings.drawQuality || 'medium',
+      referenceImage: referenceImages[0] || null,
+      referenceImages: referenceImages.length > 0 ? referenceImages : null,
+      model,
+      size,
+      quality,
       createdAt: now,
     };
 
@@ -891,9 +944,9 @@ export default function App() {
       role: 'assistant',
       imageUrl: null,
       prompt,
-      model: settings.drawModel || 'gpt-image-2',
-      size: settings.drawSize || '1024x1024',
-      quality: settings.drawQuality || 'medium',
+      model,
+      size,
+      quality,
       createdAt: now + 1,
     };
 
@@ -904,30 +957,27 @@ export default function App() {
     }));
 
     setDrawPrompt('');
-    setDrawPendingImage(null);
+    setDrawPendingImages([]);
 
     const controller = new AbortController();
     drawAbortControllerRef.current = controller;
     let currentTaskId = '';
-
     const activeConv = drawConversations.find((c) => c.id === targetConvId);
 
     try {
       await generateImage({
         settings,
         prompt,
-        referenceImage: userMessage.referenceImage,
-        size: settings.drawSize || '1024x1024',
-        quality: settings.drawQuality || 'medium',
+        referenceImages,
+        size,
+        quality,
         signal: controller.signal,
         taskMetadata: {
           conversationId: targetConvId,
-          conversationTitle: activeConv?.id === targetConvId
-            ? activeConv.title
-            : prompt.slice(0, 18),
+          conversationTitle: activeConv?.id === targetConvId ? activeConv.title : prompt.slice(0, 18),
           activeDrawConversationId: targetConvId,
-          userMessage: userMessage.referenceImage
-            ? { ...userMessage, referenceImage: undefined }
+          userMessage: referenceImages.length > 0
+            ? { ...userMessage, referenceImage: undefined, referenceImages: undefined }
             : userMessage,
           assistantMessage,
         },
@@ -1087,16 +1137,12 @@ export default function App() {
               },
             ]
           : []),
-        ...(pendingImage
-          ? [
-              {
-                type: 'image_url',
-                image_url: {
-                  url: pendingImage.url,
-                },
-              },
-            ]
-          : []),
+        ...pendingImages.map((img) => ({
+          type: 'image_url',
+          image_url: {
+            url: img.url,
+          },
+        })),
       ];
     const textContent = getTextParts(content).trim();
     const hasImage = getImageParts(content).length > 0;
@@ -1128,7 +1174,7 @@ export default function App() {
 
     const nextMessages = [...activeConversation.messages, userMessage, assistantMessage];
     setDraft('');
-    setPendingImage(null);
+    setPendingImages([]);
     setErrorText('');
     setIsSending(true);
     setStatusText('正在回复');
@@ -1388,26 +1434,41 @@ export default function App() {
   }
 
   async function handleFileChange(event) {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []);
     event.target.value = '';
-    if (!file) {
+    if (files.length === 0) {
       return;
     }
 
-    if (!file.type.startsWith('image/')) {
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
       setErrorText('只能上传图片文件。');
       return;
     }
 
+    const remainingSlots = CHAT_MAX_IMAGES - pendingImages.length;
+    if (remainingSlots <= 0) {
+      setErrorText(`最多只能上传 ${CHAT_MAX_IMAGES} 张图片。`);
+      return;
+    }
+
+    const filesToProcess = imageFiles.slice(0, remainingSlots);
+    if (imageFiles.length > remainingSlots) {
+      setErrorText(`最多只能上传 ${CHAT_MAX_IMAGES} 张图片，已添加前 ${remainingSlots} 张。`);
+    } else {
+      setErrorText('');
+    }
+
     setImageProcessing(true);
-    setErrorText('');
     setStatusText('正在处理图片');
     try {
-      const optimizedUrl = await prepareChatImage(file);
-      setPendingImage({
-        name: file.name,
-        url: optimizedUrl,
-      });
+      const results = await Promise.all(
+        filesToProcess.map(async (file) => {
+          const optimizedUrl = await prepareChatImage(file);
+          return { name: file.name, url: optimizedUrl };
+        }),
+      );
+      setPendingImages((prev) => [...prev, ...results]);
       setStatusText('已就绪');
     } catch (error) {
       setErrorText(error.message || '图片处理失败，请重试。');
@@ -1417,8 +1478,12 @@ export default function App() {
     }
   }
 
-  function clearPendingImage() {
-    setPendingImage(null);
+  function removePendingImage(index) {
+    setPendingImages((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function clearPendingImages() {
+    setPendingImages([]);
   }
 
   if (authState === 'auth-form') {
@@ -1590,8 +1655,9 @@ export default function App() {
           deleteSelectedMessages={deleteSelectedMessages}
           showCompleteHint={showCompleteHint}
           errorText={errorText}
-          pendingImage={pendingImage}
-          clearPendingImage={clearPendingImage}
+          pendingImages={pendingImages}
+          removePendingImage={removePendingImage}
+          clearPendingImages={clearPendingImages}
           handleUploadClick={handleUploadClick}
           imageProcessing={imageProcessing}
           composerRef={composerRef}
@@ -1621,8 +1687,8 @@ export default function App() {
             drawElapsedSeconds={drawElapsedSeconds}
             drawPrompt={drawPrompt}
             setDrawPrompt={setDrawPrompt}
-            drawPendingImage={drawPendingImage}
-            setDrawPendingImage={setDrawPendingImage}
+            drawPendingImages={drawPendingImages}
+            setDrawPendingImages={setDrawPendingImages}
             drawDrawerOpen={drawDrawerOpen}
             setDrawDrawerOpen={setDrawDrawerOpen}
             drawSelectMode={drawSelectMode}
@@ -1655,6 +1721,8 @@ export default function App() {
             balance={balance}
             onRecharge={() => setRechargeDialogOpen(true)}
             drawConvLoading={drawConvLoading}
+            retryDraw={retryDraw}
+            editDrawMessage={editDrawMessage}
           />
         </Suspense>
       )}

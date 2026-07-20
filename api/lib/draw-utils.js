@@ -10,11 +10,21 @@ export function resolveDrawEndpoint(apiMode) {
 }
 
 export function cleanDrawOptions(options = {}) {
+  const rawRefImages = Array.isArray(options.referenceImages)
+    ? options.referenceImages
+    : (typeof options.referenceImage === 'string' && options.referenceImage ? [options.referenceImage] : []);
+
+  const referenceImages = rawRefImages
+    .filter((url) => typeof url === 'string' && url.trim())
+    .map((url) => url.trim())
+    .slice(0, 3);
+
   return {
     apiMode: options.apiMode === 'chat' ? 'chat' : 'images',
     source: options.source === 'luxee' ? 'luxee' : 'rightcode',
     prompt: String(options.prompt || '').trim(),
-    referenceImage: typeof options.referenceImage === 'string' ? options.referenceImage : '',
+    referenceImage: referenceImages[0] || '',
+    referenceImages,
     size: options.size || '1024x1024',
     quality: options.quality || 'medium',
     model: options.model || 'gpt-image-2',
@@ -194,10 +204,11 @@ export async function runDrawRequest({ apiKey, options, signal }) {
 }
 
 function buildImagesBody(options) {
+  const images = Array.isArray(options.referenceImages) ? options.referenceImages.filter(Boolean) : [];
   return {
     model: options.model,
     prompt: options.prompt,
-    image: options.referenceImage ? [options.referenceImage] : undefined,
+    image: images.length > 0 ? images : undefined,
     size: options.size,
     quality: options.quality,
     response_format: 'url',
@@ -205,23 +216,28 @@ function buildImagesBody(options) {
 }
 
 function buildChatBody(options) {
+  const images = Array.isArray(options.referenceImages) ? options.referenceImages.filter(Boolean) : [];
   const sizeHint = options.size ? `，图片尺寸${options.size}` : '';
   const qualityHint = options.quality ? `，画质${options.quality}` : '';
-  const textPart = options.referenceImage
-    ? `请参考这张图片，${options.prompt}${sizeHint}${qualityHint}`
-    : `请根据以下描述生成图片：${options.prompt}${sizeHint}${qualityHint}`;
+  const refHint = images.length > 0 ? `请参考这${images.length}张图片，` : '请根据以下描述生成图片：';
+  const textPart = `${refHint}${options.prompt}${sizeHint}${qualityHint}`;
+
+  let userContent;
+  if (images.length > 0) {
+    userContent = [
+      { type: 'text', text: textPart },
+      ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
+    ];
+  } else {
+    userContent = textPart;
+  }
 
   return {
     model: options.model,
     messages: [
       {
         role: 'user',
-        content: options.referenceImage
-          ? [
-              { type: 'text', text: textPart },
-              { type: 'image_url', image_url: { url: options.referenceImage } },
-            ]
-          : textPart,
+        content: userContent,
       },
     ],
     stream: true,

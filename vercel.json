@@ -10,7 +10,7 @@
       "maxDuration": 300
     },
     "api/draw-task/status.js": {
-      "maxDuration": 300
+      "maxDuration": 10
     }
   },
   "rewrites": [

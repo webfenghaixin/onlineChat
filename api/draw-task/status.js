@@ -1,9 +1,8 @@
 export const config = {
-  maxDuration: 300,
+  maxDuration: 10,
 };
 
 import { createRedis, getRedisJson, verifyJWT } from '../lib/auth-utils.js';
-import { runTask } from './start.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -77,17 +76,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  if ((task.status === 'queued' || task.status === 'running') && !task.imageUrl && !task.error) {
-    const envKey = task.options?.source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
-    await runTask({
-      redis,
-      taskKey,
-      task,
-      apiKey: process.env[envKey] || '',
-    });
-    task = await getRedisJson(redis, taskKey);
-  }
-
+  // This handler is deliberately read-only. Running the task from a status
+  // poll turns one poll into a long request; when the browser aborts it, the
+  // UI reports "Load failed" although the background task later succeeds.
   sendJson(res, 200, {
     taskId: task.id,
     status: task.status,

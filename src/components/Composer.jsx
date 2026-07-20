@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from 'animal-island-ui';
-import { MAX_COMPOSER_HEIGHT } from '../lib/constants';
+import { MAX_COMPOSER_HEIGHT, CHAT_MAX_IMAGES } from '../lib/constants';
+import ImagePreview from './ImagePreview';
 
 export default function Composer({
   draft,
@@ -18,8 +19,9 @@ export default function Composer({
   deleteSelectedMessages,
   showCompleteHint,
   errorText,
-  pendingImage,
-  clearPendingImage,
+  pendingImages,
+  removePendingImage,
+  clearPendingImages,
   handleUploadClick,
   imageProcessing,
   composerRef,
@@ -35,6 +37,10 @@ export default function Composer({
     composer.style.height = 'auto';
     composer.style.height = `${Math.min(composer.scrollHeight, MAX_COMPOSER_HEIGHT)}px`;
   }, [draft, composerRef]);
+
+  const canUploadMore = Array.isArray(pendingImages) && pendingImages.length < CHAT_MAX_IMAGES;
+  const [previewIndex, setPreviewIndex] = useState(-1);
+  const pendingImageUrls = Array.isArray(pendingImages) ? pendingImages.map((img) => img.url) : [];
 
   return (
     <footer className="composer-panel">
@@ -60,14 +66,27 @@ export default function Composer({
           )}
           {errorText && <div className="error-banner">{errorText}</div>}
 
-          {pendingImage && (
-            <div className="pending-image-card">
-              <img className="pending-image-preview" src={pendingImage.url} alt="待发送图片" />
-              <div className="pending-image-info">
-                <div className="pending-image-title">已添加图片</div>
-                <div className="pending-image-name">{pendingImage.name}</div>
-              </div>
-              <Button className="pending-image-remove" type="text" size="small" danger onClick={clearPendingImage}>移除</Button>
+          {Array.isArray(pendingImages) && pendingImages.length > 0 && (
+            <div className="pending-images-row">
+              {pendingImages.map((img, index) => (
+                <div key={index} className="pending-image-card pending-image-card-mini">
+                  <img
+                    className="pending-image-preview pending-image-clickable"
+                    src={img.url}
+                    alt={`待发送图片 ${index + 1}`}
+                    onClick={() => setPreviewIndex(index)}
+                  />
+                  <Button
+                    className="pending-image-remove"
+                    type="text"
+                    size="small"
+                    danger
+                    onClick={(e) => { e.stopPropagation(); removePendingImage(index); }}
+                  >
+                    ×
+                  </Button>
+                </div>
+              ))}
             </div>
           )}
 
@@ -77,7 +96,7 @@ export default function Composer({
               type="default"
               size="small"
               onClick={handleUploadClick}
-              disabled={imageProcessing}
+              disabled={imageProcessing || !canUploadMore}
               aria-label="上传图片"
             >
               {imageProcessing ? (
@@ -119,8 +138,17 @@ export default function Composer({
         className="hidden-input"
         type="file"
         accept="image/*"
+        multiple
         onChange={handleFileChange}
       />
+
+      {previewIndex >= 0 && (
+        <ImagePreview
+          images={pendingImageUrls}
+          index={previewIndex}
+          onClose={() => setPreviewIndex(-1)}
+        />
+      )}
     </footer>
   );
 }

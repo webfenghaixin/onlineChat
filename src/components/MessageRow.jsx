@@ -1,6 +1,7 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Button } from 'animal-island-ui';
 import { classNames, formatTime, getImageParts, getTextParts, renderMarkdown } from '../lib/utils';
+import ImagePreview from './ImagePreview';
 
 const MessageRow = memo(function MessageRow({
   message,
@@ -14,10 +15,12 @@ const MessageRow = memo(function MessageRow({
   onToggleSelect,
   onEnterSelectMode,
 }) {
+  const [previewIndex, setPreviewIndex] = useState(-1);
   const images = getImageParts(message.content);
   const text = getTextParts(message.content);
   const isAssistant = message.role === 'assistant';
   const hasErrorText = isAssistant && text.startsWith('出错了：');
+  const imageUrls = images.map((img) => img.image_url.url);
 
   return (
     <article
@@ -48,12 +51,13 @@ const MessageRow = memo(function MessageRow({
         <div className={classNames('message-bubble', isAssistant ? 'message-bubble-assistant' : 'message-bubble-user')}>
           {images.length > 0 && (
             <div className="message-images">
-              {images.map((image) => (
+              {images.map((image, idx) => (
                 <img
                   key={image.image_url.url}
-                  className="message-image"
+                  className="message-image message-image-clickable"
                   src={image.image_url.url}
                   alt="上传图片"
+                  onClick={() => setPreviewIndex(idx)}
                 />
               ))}
             </div>
@@ -119,6 +123,14 @@ const MessageRow = memo(function MessageRow({
           </div>
         )}
       </div>
+
+      {previewIndex >= 0 && (
+        <ImagePreview
+          images={imageUrls}
+          index={previewIndex}
+          onClose={() => setPreviewIndex(-1)}
+        />
+      )}
     </article>
   );
 });

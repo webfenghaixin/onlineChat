@@ -8,13 +8,8 @@ import {
   getTextParts,
   renderMarkdown,
 } from '../lib/utils';
-import {
-  DRAW_SIZE_OPTIONS,
-  DRAW_QUALITY_OPTIONS,
-  DRAW_API_MODE_OPTIONS,
-  DRAW_MODEL_OPTIONS,
-  DRAW_MAX_IMAGES,
-} from '../lib/constants';
+import { DRAW_SIZE_OPTIONS, DRAW_QUALITY_OPTIONS, DRAW_API_MODE_OPTIONS, DRAW_MODEL_OPTIONS, DRAW_MAX_IMAGES, DRAW_MAX_REFERENCE_IMAGES } from '../lib/constants';
+import ImagePreview from './ImagePreview';
 import { prepareDrawReferenceImage } from '../lib/image-utils';
 import ConfirmDialog from './ConfirmDialog';
 import Scrollbar from './Scrollbar';
@@ -34,8 +29,8 @@ export default function DrawPage({
   drawElapsedSeconds,
   drawPrompt,
   setDrawPrompt,
-  drawPendingImage,
-  setDrawPendingImage,
+  drawPendingImages,
+  setDrawPendingImages,
   drawDrawerOpen,
   setDrawDrawerOpen,
   drawSelectMode,
@@ -68,10 +63,27 @@ export default function DrawPage({
   balance,
   onRecharge,
   drawConvLoading,
+  retryDraw,
+  editDrawMessage,
 }) {
+  const [previewImages, setPreviewImages] = useState(null);
+  const [previewIndex, setPreviewIndex] = useState(0);
+
+  const openPreview = useCallback((images, index = 0) => {
+    const list = Array.isArray(images) ? images.filter(Boolean) : images ? [images] : [];
+    if (list.length === 0) return;
+    setPreviewImages(list);
+    setPreviewIndex(index);
+  }, []);
+
+  const closePreview = useCallback(() => {
+    setPreviewImages(null);
+    setPreviewIndex(0);
+  }, []);
   const [copiedId, setCopiedId] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [drawDrawerTab, setDrawDrawerTab] = useState('history');
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   const messageListRef = useRef(null);
   const programmaticScrollRef = useRef(false);
 
@@ -111,6 +123,17 @@ export default function DrawPage({
     });
     return () => cancelAnimationFrame(rafId);
   }, [activeDrawMessages, isGenerating, checkIsAtBottom]);
+
+  const hasPendingDrawTask = activeDrawMessages.some(
+    (message) => message.role === 'assistant' && message.taskId && !message.imageUrl && !message.error,
+  );
+
+  useEffect(() => {
+    if (!hasPendingDrawTask && !isGenerating) return undefined;
+    setCurrentTime(Date.now());
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [hasPendingDrawTask, isGenerating]);
 
   async function handleCopy(msg) {
     try {
@@ -318,7 +341,7 @@ export default function DrawPage({
               </div>
             )}
 
-            {activeDrawConversation?.messages.map((msg) => {
+            {activeDrawConversation?.messages.map((msg, msgIndex) => {
               if (msg.role === 'user') {
                 return (
                   <article
@@ -350,9 +373,25 @@ export default function DrawPage({
                         <time>{formatTime(msg.createdAt)}</time>
                       </div>
                       <div className="message-bubble">
-                        {msg.referenceImage && (
-                          <img className="draw-ref-image" src={msg.referenceImage} alt="参考图" />
-                        )}
+                        {(() => {
+                          const refImgs = Array.isArray(msg.referenceImages) && msg.referenceImages.length > 0
+                            ? msg.referenceImages
+                            : msg.referenceImage ? [msg.referenceImage] : [];
+                          if (refImgs.length === 0) return null;
+                          return (
+                            <div className="draw-ref-images">
+                              {refImgs.map((url, i) => (
+                                <img
+                                  key={i}
+                                  className="draw-ref-image draw-ref-image-clickable"
+                                  src={url}
+                                  alt={`参考图 ${i + 1}`}
+                                  onClick={() => openPreview(refImgs, i)}
+                                />
+                              ))}
+                            </div>
+                          );
+                        })()}
                         {getTextParts(msg.content)}
                         <span className="draw-msg-config">
                           {DRAW_MODEL_OPTIONS.find((o) => o.value === msg.model)?.label || msg.model || 'GPT-Image-2'}
@@ -360,7 +399,12 @@ export default function DrawPage({
                           {DRAW_SIZE_OPTIONS.find((o) => o.value === msg.size)?.label || msg.size}
                           {' · '}
                           {DRAW_QUALITY_OPTIONS.find((o) => o.value === msg.quality)?.label}
-                          {msg.referenceImage ? ' · 图生图' : ''}
+                          {(() => {
+                            const refCount = Array.isArray(msg.referenceImages) && msg.referenceImages.length > 0
+                              ? msg.referenceImages.length
+                              : msg.referenceImage ? 1 : 0;
+                            return refCount > 0 ? ` · 图生图${refCount > 1 ? `(${refCount}张)` : ''}` : '';
+                          })()}
                         </span>
                       </div>
                       {!drawSelectMode && (
@@ -413,9 +457,10 @@ export default function DrawPage({
                       </div>
                       <div className="message-bubble">
                         <img
-                          className="draw-result-image"
+                          className="draw-result-image draw-result-image-clickable"
                           src={msg.imageUrl}
                           alt={msg.prompt || getTextParts(msg.content) || '生成图片'}
+                          onClick={() => openPreview(msg.imageUrl)}
                         />
                         {typeof msg.durationSeconds === 'number' && (
                           <div className="draw-result-meta">生成用时 {formatDuration(msg.durationSeconds)}</div>
@@ -475,13 +520,46 @@ export default function DrawPage({
                       </div>
                       <div className="message-bubble">
                         <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(`出错了：${msg.error}`) }} />
+                        {!drawSelectMode && !isGenerating && (() => {
+                          let userMsg = null;
+                          for (let i = msgIndex - 1; i >= 0; i--) {
+                            if (activeDrawConversation.messages[i].role === 'user') {
+                              userMsg = activeDrawConversation.messages[i];
+                              break;
+                            }
+                          }
+                          if (!userMsg) return null;
+                          return (
+                            <div className="draw-result-actions">
+                              <Button
+                                className="tool-button"
+                                type="primary"
+                                size="small"
+                                onClick={() => retryDraw?.(userMsg.id)}
+                              >
+                                重试
+                              </Button>
+                              <Button
+                                className="tool-button"
+                                type="default"
+                                size="small"
+                                onClick={() => editDrawMessage?.(userMsg.id)}
+                              >
+                                重新编辑
+                              </Button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </article>
                 );
               }
 
-              if (isGenerating) {
+              if (isGenerating || (msg.taskId && !msg.imageUrl && !msg.error)) {
+                const elapsedSeconds = msg.taskId && msg.createdAt
+                  ? Math.max(0, Math.floor((currentTime - msg.createdAt) / 1000))
+                  : drawElapsedSeconds;
                 return (
                   <article
                     key={msg.id}
@@ -516,7 +594,7 @@ export default function DrawPage({
                             <img className="draw-loading-logo" src="/logo-2.png" alt="" />
                           </div>
                           <div className="draw-loading-copy">
-                            <span className="draw-loading-subtitle">正在生成图片，已等待 {formatDuration(drawElapsedSeconds)}</span>
+                            <span className="draw-loading-subtitle">正在生成图片，已等待 {formatDuration(elapsedSeconds)}</span>
                           </div>
                         </div>
                       </div>
@@ -575,16 +653,27 @@ export default function DrawPage({
                 </div>
               )}
 
-              {drawPendingImage && (
-                <div className="pending-image-card">
-                  <img className="pending-image-preview" src={drawPendingImage.url} alt="参考图" />
-                  <div className="pending-image-info">
-                    <div className="pending-image-title">参考图（图生图）</div>
-                    <div className="pending-image-name">{drawPendingImage.name}</div>
-                  </div>
-                  <Button className="pending-image-remove" type="text" size="small" danger onClick={() => setDrawPendingImage(null)}>
-                    移除
-                  </Button>
+              {Array.isArray(drawPendingImages) && drawPendingImages.length > 0 && (
+                <div className="pending-images-row">
+                  {drawPendingImages.map((img, index) => (
+                    <div key={index} className="pending-image-card pending-image-card-mini">
+                      <img
+                        className="pending-image-preview pending-image-clickable"
+                        src={img.url}
+                        alt={`参考图 ${index + 1}`}
+                        onClick={() => openPreview(drawPendingImages.map((i) => i.url), index)}
+                      />
+                      <Button
+                        className="pending-image-remove"
+                        type="text"
+                        size="small"
+                        danger
+                        onClick={(e) => { e.stopPropagation(); setDrawPendingImages((prev) => prev.filter((_, i) => i !== index)); }}
+                      >
+                        ×
+                      </Button>
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -662,6 +751,7 @@ export default function DrawPage({
                   type="default"
                   size="small"
                   onClick={() => drawFileInputRef.current?.click()}
+                  disabled={(drawPendingImages?.length || 0) >= DRAW_MAX_REFERENCE_IMAGES}
                   aria-label="上传参考图"
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -708,28 +798,38 @@ export default function DrawPage({
             className="hidden-input"
             type="file"
             accept="image/*"
+            multiple
             onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
+              const files = Array.from(e.target.files || []);
+              e.target.value = '';
+              if (files.length === 0) return;
 
-              if (!file.type.startsWith('image/')) {
+              const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+              if (imageFiles.length === 0) {
                 setErrorText('只能上传图片文件。');
-                e.target.value = '';
                 return;
               }
 
+              const currentCount = Array.isArray(drawPendingImages) ? drawPendingImages.length : 0;
+              const remainingSlots = DRAW_MAX_REFERENCE_IMAGES - currentCount;
+              if (remainingSlots <= 0) {
+                setErrorText(`最多只能上传 ${DRAW_MAX_REFERENCE_IMAGES} 张参考图。`);
+                return;
+              }
+
+              const filesToProcess = imageFiles.slice(0, remainingSlots);
               try {
-                const optimizedImageUrl = await prepareDrawReferenceImage(file);
-                setDrawPendingImage({
-                  name: file.name,
-                  url: optimizedImageUrl,
-                });
+                const results = await Promise.all(
+                  filesToProcess.map(async (file) => {
+                    const optimizedImageUrl = await prepareDrawReferenceImage(file);
+                    return { name: file.name, url: optimizedImageUrl };
+                  }),
+                );
+                setDrawPendingImages((prev) => [...(prev || []), ...results]);
                 setErrorText('');
               } catch (error) {
                 setErrorText(error.message || '参考图处理失败');
               }
-
-              e.target.value = '';
             }}
           />
         </footer>
@@ -755,6 +855,14 @@ export default function DrawPage({
           setDeleteDrawConversationTarget(null);
         }}
       />
+
+      {previewImages && (
+        <ImagePreview
+          images={previewImages}
+          index={previewIndex}
+          onClose={closePreview}
+        />
+      )}
     </div>
   );
 }

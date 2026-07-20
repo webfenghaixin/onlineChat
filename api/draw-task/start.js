@@ -94,6 +94,62 @@ function normalizeTaskMetadata(metadata, taskId) {
 async function upsertDrawTaskRecord(redis, username, metadata, patch = {}) {
   if (!metadata) return;
 
+  // Keep background task updates in the same split Redis keys used by the
+  // data load/save APIs. The legacy `data:{username}` key is not read by the
+  // current client, so writing there loses task updates after a page reload.
+  {
+    const conversationKey = `data:${username}:draw:${metadata.conversationId}`;
+    const existingConversation = await getRedisJson(redis, conversationKey);
+    const conversation = {
+      id: metadata.conversationId,
+      title: metadata.conversationTitle || existingConversation?.title || 'New drawing',
+      updatedAt: Date.now(),
+      messages: Array.isArray(existingConversation?.messages)
+        ? [...existingConversation.messages]
+        : [],
+    };
+
+    if (!conversation.messages.some((message) => message.id === metadata.userMessage.id)) {
+      conversation.messages.push(metadata.userMessage);
+    }
+
+    const assistantIndex = conversation.messages.findIndex(
+      (message) => message.id === metadata.assistantMessage.id,
+    );
+    if (assistantIndex >= 0) {
+      conversation.messages[assistantIndex] = {
+        ...conversation.messages[assistantIndex],
+        ...patch,
+      };
+    } else {
+      conversation.messages.push({
+        ...metadata.assistantMessage,
+        ...patch,
+      });
+    }
+
+    conversation.updatedAt = Date.now();
+    await setRedisJson(redis, conversationKey, conversation);
+
+    const metaKey = `data:${username}:meta`;
+    const meta = (await getRedisJson(redis, metaKey)) || {};
+    const existingSummaries = Array.isArray(meta.drawConversations) ? meta.drawConversations : [];
+    const summary = {
+      id: conversation.id,
+      title: conversation.title,
+      updatedAt: conversation.updatedAt,
+      messageCount: conversation.messages.length,
+      imageCount: conversation.messages.filter((message) => message.role === 'assistant' && message.imageUrl).length,
+    };
+    await setRedisJson(redis, metaKey, {
+      ...meta,
+      drawConversations: [summary, ...existingSummaries.filter((item) => item.id !== conversation.id)],
+      activeDrawConversationId: meta.activeDrawConversationId || metadata.activeDrawConversationId,
+      updatedAt: Date.now(),
+    });
+    return;
+  }
+
   const dataKey = `data:${username}`;
   const data = (await getRedisJson(redis, dataKey)) || {
     conversations: [],

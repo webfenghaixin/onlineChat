@@ -2,9 +2,9 @@ import { getToken } from './auth';
 import { DEFAULT_PROXY_PATH } from './constants';
 
 const SSE_BOUNDARY = '\n\n';
-const DRAW_TASK_POLL_INTERVAL_MS = 10000;
-const DRAW_TASK_POLL_INTERVAL_AFTER_30S_MS = 3000;
-const DRAW_TASK_SLOW_POLL_WINDOW_MS = 30000;
+const DRAW_TASK_FIRST_POLL_DELAY_MS = 30000;
+const DRAW_TASK_POLL_INTERVAL_MS = 5000;
+const DRAW_TASK_MAX_DURATION_MS = 5 * 60 * 1000;
 const GEMINI_MODEL_PREFIX = 'gemini-';
 
 function normalizeDrawErrorMessage(rawText, status, apiModeLabel = '当前模式') {
@@ -667,13 +667,6 @@ function abortableDelay(ms, signal) {
   });
 }
 
-function resolveDrawTaskPollInterval(startedAt) {
-  const elapsedMs = Date.now() - Number(startedAt || Date.now());
-  return elapsedMs < DRAW_TASK_SLOW_POLL_WINDOW_MS
-    ? DRAW_TASK_POLL_INTERVAL_MS
-    : DRAW_TASK_POLL_INTERVAL_AFTER_30S_MS;
-}
-
 async function readJsonResponse(response) {
   const text = await response.text();
   try {
@@ -735,8 +728,30 @@ async function generateImageViaTaskApi({
 }
 
 export async function pollDrawTask({ settings, taskId, startedAt, signal, onImage }) {
+  let isFirstPoll = true;
   while (true) {
-    await abortableDelay(resolveDrawTaskPollInterval(startedAt), signal);
+    const elapsed = Date.now() - Number(startedAt || Date.now());
+    if (elapsed >= DRAW_TASK_MAX_DURATION_MS) {
+      throw new Error('图片生成超时（已超过 5 分钟），已自动停止。');
+    }
+
+    let delay;
+    if (isFirstPoll) {
+      // 首次轮询：从请求发送算起 30 秒后开始（扣除 start 请求已耗时间）
+      delay = Math.max(0, DRAW_TASK_FIRST_POLL_DELAY_MS - elapsed);
+      isFirstPoll = false;
+    } else {
+      // 后续轮询：上一次轮询返回后等待 5 秒
+      delay = DRAW_TASK_POLL_INTERVAL_MS;
+    }
+
+    // 等待时长不超过 5 分钟总时长剩余部分
+    const remaining = DRAW_TASK_MAX_DURATION_MS - (Date.now() - Number(startedAt || Date.now()));
+    if (remaining <= 0) {
+      throw new Error('图片生成超时（已超过 5 分钟），已自动停止。');
+    }
+    await abortableDelay(Math.min(delay, remaining), signal);
+
     try {
       const statusUrl = new URL(resolveDrawTaskUrl(settings, 'status'), window.location.origin);
       statusUrl.searchParams.set('id', taskId);

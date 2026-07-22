@@ -2,7 +2,10 @@ export const config = {
   maxDuration: 10,
 };
 
-import { createRedis, getRedisJson, verifyJWT } from '../lib/auth-utils.js';
+import { createRedis, getRedisJson, setRedisJson, verifyJWT } from '../lib/auth-utils.js';
+
+const TASK_TTL_SECONDS = 24 * 60 * 60;
+const TASK_RUNNING_TIMEOUT_MS = 5 * 60 * 1000;
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -74,6 +77,25 @@ export default async function handler(req, res) {
   if (!task) {
     sendJson(res, 404, { error: '任务不存在或已过期' });
     return;
+  }
+
+  // 僵尸任务检测：后台 waitUntil 任务被 Vercel 在 maxDuration 强制终止时，
+  // runTask 的 catch/finally 来不及写入 failed 状态，Redis 里会永久卡在 running。
+  // 若 running 超过 5 分钟，判定为超时失败并回写 Redis，让前端轮询能正常停止。
+  const now = Date.now();
+  if (
+    task.status === 'running' &&
+    typeof task.updatedAt === 'number' &&
+    now - task.updatedAt > TASK_RUNNING_TIMEOUT_MS
+  ) {
+    task = {
+      ...task,
+      status: 'failed',
+      error: '图片生成超时（已超过 5 分钟），服务端任务已停止。',
+      completedAt: now,
+      updatedAt: now,
+    };
+    await redis.set(taskKey, JSON.stringify(task), { ex: TASK_TTL_SECONDS }).catch(() => {});
   }
 
   // This handler is deliberately read-only. Running the task from a status

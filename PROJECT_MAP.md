@@ -316,11 +316,11 @@ onlineChat/
 | 用途 | 端点 |
 |------|------|
 | Luxee 聊天 | `https://api.luxee.ai/v1/chat/completions` |
-| RightCode 聊天 | `https://www.right.codes/codex-pro/v1/chat/completions` |
-| RightCode 日抛 | `https://www.right.codes/codex/v1/responses` |
-| Gemini | `https://www.right.codes/gemini/v1beta/models/{model}:streamGenerateContent?alt=sse` |
-| 画图 Images API | `https://www.right.codes/draw/v1/images/generations` |
-| 画图 Chat API | `https://www.right.codes/draw/v1/chat/completions` |
+| RightCode 聊天 | `https://www.rightapi.ai/codex-pro/v1/chat/completions` |
+| RightCode 日抛 | `https://www.rightapi.ai/codex/v1/responses` |
+| Gemini | `https://www.rightapi.ai/gemini/v1beta/models/{model}:streamGenerateContent?alt=sse` |
+| 画图 Images API | `https://www.rightapi.ai/draw/v1/images/generations` |
+| 画图 Chat API | `https://www.rightapi.ai/draw/v1/chat/completions` |
 
 ---
 

@@ -1,4 +1,4 @@
-const DRAW_BASE = 'https://www.right.codes/draw';
+const DRAW_BASE = 'https://www.rightapi.ai/draw';
 export const ALLOWED_DRAW_PATHS = ['/v1/images/generations', '/v1/chat/completions'];
 
 export function resolveDrawPath(apiMode) {

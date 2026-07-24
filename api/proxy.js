@@ -17,7 +17,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const GEMINI_BASE_URL = 'https://www.right.codes/gemini';
+const GEMINI_BASE_URL = 'https://www.rightapi.ai/gemini';
 const GEMINI_DEFAULT_MODEL = 'gemini-3.1-pro';
 const GEMINI_MODEL_PREFIX = 'gemini-';
 
@@ -28,7 +28,7 @@ const SOURCE_ENV_MAP = {
   },
   rightcode: {
     key: 'API_KEY_RIGHTCODE',
-    endpoint: 'https://www.right.codes/codex/v1/chat/completions',
+    endpoint: 'https://www.rightapi.ai/codex/v1/chat/completions',
   },
 };
 

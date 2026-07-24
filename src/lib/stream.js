@@ -526,7 +526,7 @@ function resolveDrawProxyUrl(settings, apiMode) {
     }
     return drawPath.startsWith('/') ? drawPath : `/${drawPath}`;
   }
-  const basePath = 'https://www.right.codes/draw';
+  const basePath = 'https://www.rightapi.ai/draw';
   return apiMode === 'chat'
     ? `${basePath}/v1/chat/completions`
     : `${basePath}/v1/images/generations`;

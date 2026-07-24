@@ -115,13 +115,12 @@ export default function App() {
   const [imageProcessing, setImageProcessing] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
   const [drawPrompt, setDrawPrompt] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [isDrawSubmitting, setIsDrawSubmitting] = useState(false);
   const [drawConversations, setDrawConversations] = useState(loadedState.drawConversations);
   const [activeDrawConversationId, setActiveDrawConversationId] = useState(loadedState.activeDrawConversationId);
   const [drawDrawerOpen, setDrawDrawerOpen] = useState(false);
   const [drawLimitWarning, setDrawLimitWarning] = useState(false);
   const [drawPendingImages, setDrawPendingImages] = useState([]);
-  const [drawElapsedSeconds, setDrawElapsedSeconds] = useState(0);
   const [deleteDrawTarget, setDeleteDrawTarget] = useState(null);
   const [deleteDrawConversationTarget, setDeleteDrawConversationTarget] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
@@ -136,7 +135,8 @@ export default function App() {
   const [drawConvLoading, setDrawConvLoading] = useState(false);
 
   const abortControllerRef = useRef(null);
-  const drawAbortControllerRef = useRef(null);
+  const drawTaskControllersRef = useRef(new Map());
+  const drawSubmissionRef = useRef(null);
   const composerRef = useRef(null);
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -163,6 +163,23 @@ export default function App() {
     (c) => c.id === activeDrawConversationId,
   ) || drawConversations[0] || null;
   const activeDrawMessages = activeDrawConversation?.messages || [];
+  const pendingDrawTaskCount = useMemo(() => {
+    let count = 0;
+    for (const conversation of drawConversations) {
+      for (const message of (conversation.messages || [])) {
+        if (
+          message.role === 'assistant' &&
+          !message.imageUrl &&
+          !message.error &&
+          (message.pending || message.taskId)
+        ) {
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }, [drawConversations]);
+  const isGenerating = pendingDrawTaskCount > 0;
   const drawImageCount = useMemo(() => {
     let count = 0;
     for (const c of drawConversations) {
@@ -397,21 +414,6 @@ export default function App() {
   }, [authState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!isGenerating) {
-      setDrawElapsedSeconds(0);
-      return undefined;
-    }
-
-    setDrawElapsedSeconds(0);
-    const startedAt = Date.now();
-    const timer = window.setInterval(() => {
-      setDrawElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
-
-    return () => window.clearInterval(timer);
-  }, [isGenerating]);
-
-  useEffect(() => {
     if (authState !== 'authenticated') return undefined;
 
     const pendingTasks = [];
@@ -442,6 +444,7 @@ export default function App() {
       resumedDrawTasksRef.current.add(task.taskId);
       activeDrawTaskIdsRef.current.add(task.taskId);
       const controller = new AbortController();
+      drawTaskControllersRef.current.set(task.messageId, controller);
 
       pollDrawTask({
         settings,
@@ -454,7 +457,7 @@ export default function App() {
             ...conv,
             messages: (conv.messages || []).map((message) =>
               message.id === task.messageId
-                ? { ...message, imageUrl, error: undefined, durationSeconds }
+                ? { ...message, imageUrl, error: undefined, pending: false, durationSeconds }
                 : message,
             ),
           }));
@@ -465,11 +468,14 @@ export default function App() {
           ...conv,
           messages: (conv.messages || []).map((message) =>
             message.id === task.messageId
-              ? { ...message, error: error.message || '图片生成失败，请稍后重试。' }
+              ? { ...message, error: error.message || '图片生成失败，请稍后重试。', pending: false }
               : message,
           ),
         }));
       }).finally(() => {
+        if (drawTaskControllersRef.current.get(task.messageId) === controller) {
+          drawTaskControllersRef.current.delete(task.messageId);
+        }
         activeDrawTaskIdsRef.current.delete(task.taskId);
       });
 
@@ -546,7 +552,10 @@ export default function App() {
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
-      drawAbortControllerRef.current?.abort();
+      for (const controller of drawTaskControllersRef.current.values()) {
+        controller.abort();
+      }
+      drawTaskControllersRef.current.clear();
     };
   }, []);
 
@@ -718,14 +727,6 @@ export default function App() {
     setStatusText('已就绪');
   }
 
-  function stopDrawGeneration() {
-    drawAbortControllerRef.current?.abort();
-    drawAbortControllerRef.current = null;
-    setIsGenerating(false);
-    setDrawElapsedSeconds(0);
-    setStatusText('图片生成已停止');
-  }
-
   function createNewDrawConversation() {
     const conv = createDrawConversation();
     newDrawConvRef.current.add(conv.id);
@@ -737,7 +738,6 @@ export default function App() {
     setDrawPendingImages([]);
     setDrawSelectMode(false);
     setDrawSelectedMessageIds(new Set());
-    setDrawElapsedSeconds(0);
     setDrawDrawerOpen(false);
   }
 
@@ -847,7 +847,7 @@ export default function App() {
 
   async function handleDraw() {
     const prompt = drawPrompt.trim();
-    if (!prompt || isGenerating || authState !== 'authenticated') {
+    if (!prompt || drawSubmissionRef.current || authState !== 'authenticated') {
       return;
     }
 
@@ -904,7 +904,7 @@ export default function App() {
   }
 
   async function _executeDraw({ prompt, referenceImages, targetConvId, model, size, quality }) {
-    if (!prompt || isGenerating || authState !== 'authenticated') return;
+    if (!prompt || drawSubmissionRef.current || authState !== 'authenticated') return;
 
     if (balance !== null && balance < COST_DRAW - 0.0001) {
       setErrorText(`余额不足，制图需要 ${COST_DRAW} 元，当前余额 ${balance.toFixed(2)} 元`);
@@ -912,12 +912,19 @@ export default function App() {
       return;
     }
 
+    const submissionId = createId();
+    drawSubmissionRef.current = submissionId;
+    setIsDrawSubmitting(true);
+    const releaseSubmission = () => {
+      if (drawSubmissionRef.current !== submissionId) return;
+      drawSubmissionRef.current = null;
+      setIsDrawSubmitting(false);
+    };
+
     if (drawImageCount >= DRAW_MAX_IMAGES) setDrawLimitWarning(true);
 
     setErrorText('');
-    setIsGenerating(true);
-    setDrawElapsedSeconds(0);
-    setStatusText('正在生成图片');
+    setStatusText('正在提交图片任务');
 
     if (!targetConvId || !drawConversations.find((c) => c.id === targetConvId)) {
       const conv = createDrawConversation();
@@ -947,6 +954,7 @@ export default function App() {
       model,
       size,
       quality,
+      pending: true,
       createdAt: now + 1,
     };
 
@@ -960,7 +968,7 @@ export default function App() {
     setDrawPendingImages([]);
 
     const controller = new AbortController();
-    drawAbortControllerRef.current = controller;
+    drawTaskControllersRef.current.set(assistantMessage.id, controller);
     let currentTaskId = '';
     const activeConv = drawConversations.find((c) => c.id === targetConvId);
 
@@ -987,16 +995,20 @@ export default function App() {
           updateDrawConversation(targetConvId, (conv) => ({
             ...conv,
             messages: (conv.messages || []).map((m) =>
-              m.id === assistantMessage.id ? { ...m, taskId } : m,
+              m.id === assistantMessage.id ? { ...m, taskId, pending: true } : m,
             ),
           }));
+          setStatusText('图片任务已提交，可继续发起制图');
+          releaseSubmission();
         },
         onImage: (imageUrl, taskTiming) => {
           const durationSeconds = resolveDrawDurationSeconds(taskTiming, now);
           updateDrawConversation(targetConvId, (conv) => ({
             ...conv,
             messages: (conv.messages || []).map((m) =>
-              m.id === assistantMessage.id ? { ...m, imageUrl, durationSeconds, error: undefined } : m,
+              m.id === assistantMessage.id
+                ? { ...m, imageUrl, durationSeconds, error: undefined, pending: false }
+                : m,
             ),
           }));
           enforceDrawLimit();
@@ -1016,7 +1028,7 @@ export default function App() {
         updateDrawConversation(targetConvId, (conv) => ({
           ...conv,
           messages: (conv.messages || []).map((m) =>
-            m.id === assistantMessage.id ? { ...m, error: nextErrorText } : m,
+            m.id === assistantMessage.id ? { ...m, error: nextErrorText, pending: false } : m,
           ),
         }));
       } else {
@@ -1027,13 +1039,13 @@ export default function App() {
         }));
       }
     } finally {
-      if (drawAbortControllerRef.current === controller) {
-        drawAbortControllerRef.current = null;
+      if (drawTaskControllersRef.current.get(assistantMessage.id) === controller) {
+        drawTaskControllersRef.current.delete(assistantMessage.id);
       }
       if (currentTaskId) {
         activeDrawTaskIdsRef.current.delete(currentTaskId);
       }
-      setIsGenerating(false);
+      releaseSubmission();
       refreshBalance();
     }
   }
@@ -1684,7 +1696,8 @@ export default function App() {
             activeDrawMessages={activeDrawMessages}
             drawImageCount={drawImageCount}
             isGenerating={isGenerating}
-            drawElapsedSeconds={drawElapsedSeconds}
+            pendingDrawTaskCount={pendingDrawTaskCount}
+            isDrawSubmitting={isDrawSubmitting}
             drawPrompt={drawPrompt}
             setDrawPrompt={setDrawPrompt}
             drawPendingImages={drawPendingImages}
@@ -1704,7 +1717,6 @@ export default function App() {
             closeDrawMode={closeDrawMode}
             createNewDrawConversation={createNewDrawConversation}
             removeDrawConversation={removeDrawConversation}
-            stopDrawGeneration={stopDrawGeneration}
             handleDraw={handleDraw}
             downloadImage={downloadImage}
             requestDeleteDrawMessage={requestDeleteDrawMessage}

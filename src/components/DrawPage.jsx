@@ -26,7 +26,8 @@ export default function DrawPage({
   activeDrawMessages,
   drawImageCount,
   isGenerating,
-  drawElapsedSeconds,
+  pendingDrawTaskCount,
+  isDrawSubmitting,
   drawPrompt,
   setDrawPrompt,
   drawPendingImages,
@@ -46,7 +47,6 @@ export default function DrawPage({
   closeDrawMode,
   createNewDrawConversation,
   removeDrawConversation,
-  stopDrawGeneration,
   handleDraw,
   downloadImage,
   requestDeleteDrawMessage,
@@ -124,9 +124,14 @@ export default function DrawPage({
     return () => cancelAnimationFrame(rafId);
   }, [activeDrawMessages, isGenerating, checkIsAtBottom]);
 
-  const hasPendingDrawTask = activeDrawMessages.some(
-    (message) => message.role === 'assistant' && message.taskId && !message.imageUrl && !message.error,
+  const isPendingDrawMessage = (message) => (
+    message.role === 'assistant' &&
+    !message.imageUrl &&
+    !message.error &&
+    (message.pending || message.taskId)
   );
+  const activePendingDrawTaskCount = activeDrawMessages.filter(isPendingDrawMessage).length;
+  const hasPendingDrawTask = activePendingDrawTaskCount > 0;
 
   useEffect(() => {
     if (!hasPendingDrawTask && !isGenerating) return undefined;
@@ -286,7 +291,9 @@ export default function DrawPage({
                 <h1>{activeDrawConversation?.title || 'AI 画图'}</h1>
                 <p className="chat-title-status">
                   <span className={classNames('status-dot', isGenerating && 'status-dot-live')} />
-                  {isGenerating ? `生成中 ${formatDuration(drawElapsedSeconds)}` : `已存 ${drawImageCount}/${DRAW_MAX_IMAGES} 张`}
+                  {isGenerating
+                    ? `${pendingDrawTaskCount} 个任务生成中`
+                    : `已存 ${drawImageCount}/${DRAW_MAX_IMAGES} 张`}
                 </p>
               </div>
 
@@ -520,7 +527,7 @@ export default function DrawPage({
                       </div>
                       <div className="message-bubble">
                         <div className="markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(`出错了：${msg.error}`) }} />
-                        {!drawSelectMode && !isGenerating && (() => {
+                        {!drawSelectMode && (() => {
                           let userMsg = null;
                           for (let i = msgIndex - 1; i >= 0; i--) {
                             if (activeDrawConversation.messages[i].role === 'user') {
@@ -535,6 +542,7 @@ export default function DrawPage({
                                 className="tool-button"
                                 type="primary"
                                 size="small"
+                                disabled={isDrawSubmitting}
                                 onClick={() => retryDraw?.(userMsg.id)}
                               >
                                 重试
@@ -556,10 +564,10 @@ export default function DrawPage({
                 );
               }
 
-              if (isGenerating || (msg.taskId && !msg.imageUrl && !msg.error)) {
-                const elapsedSeconds = msg.taskId && msg.createdAt
+              if (isPendingDrawMessage(msg)) {
+                const elapsedSeconds = msg.createdAt
                   ? Math.max(0, Math.floor((currentTime - msg.createdAt) / 1000))
-                  : drawElapsedSeconds;
+                  : 0;
                 return (
                   <article
                     key={msg.id}
@@ -649,7 +657,7 @@ export default function DrawPage({
               {isGenerating && (
                 <div className="draw-waiting-bar">
                   <span className="draw-waiting-dot" />
-                  <span>正在生成，已等待 {formatDuration(drawElapsedSeconds)}</span>
+                  <span>{pendingDrawTaskCount} 个任务正在异步生成，可继续提交</span>
                 </div>
               )}
 
@@ -772,23 +780,16 @@ export default function DrawPage({
                     }
                   }}
                   placeholder="描述你想要的图片..."
-                  disabled={isGenerating}
                 />
-                {isGenerating ? (
-                  <Button className="send-button stop-button" type="primary" danger size="small" onClick={stopDrawGeneration}>
-                    停止
-                  </Button>
-                ) : (
-                  <Button
-                    className="send-button"
-                    type="primary"
-                    size="small"
-                    disabled={!drawPrompt.trim() || isGenerating || authState !== 'authenticated'}
-                    onClick={handleDraw}
-                  >
-                    生成
-                  </Button>
-                )}
+                <Button
+                  className="send-button"
+                  type="primary"
+                  size="small"
+                  disabled={!drawPrompt.trim() || isDrawSubmitting || authState !== 'authenticated'}
+                  onClick={handleDraw}
+                >
+                  {isDrawSubmitting ? '提交中' : '生成'}
+                </Button>
               </div>
             </>
           )}

@@ -14,6 +14,15 @@ const CORS_HEADERS = {
 
 const TASK_TTL_SECONDS = 24 * 60 * 60;
 const IMAGE_TTL_SECONDS = 30 * 24 * 60 * 60;
+const DRAW_DATA_LOCK_TTL_SECONDS = 15;
+const DRAW_DATA_LOCK_WAIT_MS = 8000;
+const DRAW_DATA_LOCK_RETRY_MS = 50;
+const RELEASE_DRAW_DATA_LOCK_SCRIPT = `
+  if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+  end
+  return 0
+`;
 
 function setCorsHeaders(res) {
   for (const [key, value] of Object.entries(CORS_HEADERS)) {
@@ -62,6 +71,33 @@ async function setTask(redis, key, task) {
   await redis.set(key, JSON.stringify(task), { ex: TASK_TTL_SECONDS });
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withDrawDataLock(redis, username, action) {
+  const lockKey = `drawDataLock:${username}`;
+  const token = crypto.randomUUID();
+  const deadline = Date.now() + DRAW_DATA_LOCK_WAIT_MS;
+
+  while (Date.now() < deadline) {
+    const acquired = await redis.set(lockKey, token, {
+      nx: true,
+      ex: DRAW_DATA_LOCK_TTL_SECONDS,
+    });
+    if (acquired) {
+      try {
+        return await action();
+      } finally {
+        await redis.eval(RELEASE_DRAW_DATA_LOCK_SCRIPT, [lockKey], [token]).catch(() => {});
+      }
+    }
+    await wait(DRAW_DATA_LOCK_RETRY_MS);
+  }
+
+  throw new Error('画图记录更新繁忙，请稍后重试。');
+}
+
 function resolveTaskLockKey(task) {
   if (!task?.owner || !task?.id) return null;
   return `drawTaskLock:${task.owner}:${task.id}`;
@@ -92,6 +128,13 @@ function normalizeTaskMetadata(metadata, taskId) {
 }
 
 async function upsertDrawTaskRecord(redis, username, metadata, patch = {}) {
+  if (!metadata) return;
+  return withDrawDataLock(redis, username, () => (
+    upsertDrawTaskRecordUnlocked(redis, username, metadata, patch)
+  ));
+}
+
+async function upsertDrawTaskRecordUnlocked(redis, username, metadata, patch = {}) {
   if (!metadata) return;
 
   // Keep background task updates in the same split Redis keys used by the
@@ -288,6 +331,7 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       blobUrl,
       blobUploadError,
       error: undefined,
+      pending: false,
     });
     // 图片成功后扣费 0.3 元；扣费失败不阻塞成功状态
     if (persistentImageUrl) {
@@ -307,6 +351,7 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       });
       await upsertDrawTaskRecord(redis, task.owner, task.metadata, {
         error: errorMessage,
+        pending: false,
       });
     } catch {}
   } finally {

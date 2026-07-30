@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Card, Collapse, Select, Divider, Loading, Tabs } from 'animal-island-ui';
 import {
   classNames,
@@ -80,6 +80,13 @@ export default function DrawPage({
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const [drawImageProcessing, setDrawImageProcessing] = useState(false);
 
+  const generatedDrawGallery = useMemo(
+    () => activeDrawMessages
+      .filter((message) => message.role === 'assistant' && message.imageUrl)
+      .map((message) => ({ id: message.id, url: message.imageUrl })),
+    [activeDrawMessages],
+  );
+
   const openPreview = useCallback((images, index = 0) => {
     const list = Array.isArray(images) ? images.filter(Boolean) : images ? [images] : [];
     if (list.length === 0) return;
@@ -91,6 +98,12 @@ export default function DrawPage({
     setPreviewImages(null);
     setPreviewIndex(0);
   }, []);
+
+  const openGeneratedImagePreview = useCallback((messageId) => {
+    const imageIndex = generatedDrawGallery.findIndex((image) => image.id === messageId);
+    if (imageIndex < 0) return;
+    openPreview(generatedDrawGallery.map((image) => image.url), imageIndex);
+  }, [generatedDrawGallery, openPreview]);
   const [copiedId, setCopiedId] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [drawDrawerTab, setDrawDrawerTab] = useState('history');
@@ -541,7 +554,6 @@ export default function DrawPage({
                 if (!isFirstBatchMessage) return null;
 
                 const successfulMessages = resultMessages.filter((message) => message.imageUrl);
-                const successfulImages = successfulMessages.map((message) => message.imageUrl);
                 const failedMessages = resultMessages.filter((message) => message.error);
                 const pendingMessages = resultMessages.filter(isPendingDrawMessage);
                 const batchMessageIds = resultMessages.map((message) => message.id);
@@ -598,14 +610,13 @@ export default function DrawPage({
                         >
                           {resultMessages.map((resultMessage, resultIndex) => {
                             if (resultMessage.imageUrl) {
-                              const previewImageIndex = successfulMessages.findIndex((item) => item.id === resultMessage.id);
                               return (
                                 <div key={resultMessage.id} className="draw-result-tile">
                                   <img
                                     className="draw-result-image draw-result-image-clickable"
                                     src={resultMessage.imageUrl}
                                     alt={`${resultMessage.prompt || '生成图片'} ${resultIndex + 1}`}
-                                    onClick={() => openPreview(successfulImages, previewImageIndex)}
+                                    onClick={() => openGeneratedImagePreview(resultMessage.id)}
                                   />
                                   {!drawSelectMode && (
                                     <button

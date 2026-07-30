@@ -46,7 +46,7 @@ export default function FullscreenEditor({
     textareaRef.current?.focus();
 
     const handleKeyDown = (event) => {
-      if (document.querySelector('.image-preview-overlay')) return;
+      if (document.querySelector('.image-preview-lightbox')) return;
 
       if (event.key === 'Escape') {
         actionsRef.current.onChange(initialValueRef.current);

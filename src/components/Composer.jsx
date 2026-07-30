@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from 'animal-island-ui';
 import { MAX_COMPOSER_HEIGHT, CHAT_MAX_IMAGES } from '../lib/constants';
 import ImagePreview from './ImagePreview';
+import FullscreenEditor, { FullscreenIcon } from './FullscreenEditor';
 
 export default function Composer({
   draft,
@@ -27,6 +28,7 @@ export default function Composer({
   composerRef,
   fileInputRef,
   handleFileChange,
+  handleComposerPaste,
 }) {
   useEffect(() => {
     const composer = composerRef.current;
@@ -40,6 +42,7 @@ export default function Composer({
 
   const canUploadMore = Array.isArray(pendingImages) && pendingImages.length < CHAT_MAX_IMAGES;
   const [previewIndex, setPreviewIndex] = useState(-1);
+  const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const pendingImageUrls = Array.isArray(pendingImages) ? pendingImages.map((img) => img.url) : [];
 
   return (
@@ -91,6 +94,15 @@ export default function Composer({
           )}
 
           <div className="composer-box">
+            <button
+              type="button"
+              className="composer-fullscreen-button"
+              onClick={() => setFullscreenOpen(true)}
+              aria-label="全屏编辑消息"
+              title="全屏编辑消息"
+            >
+              <FullscreenIcon />
+            </button>
             <Button
               className="upload-button"
               type="default"
@@ -113,6 +125,7 @@ export default function Composer({
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={handleComposerKeyDown}
+              onPaste={handleComposerPaste}
               placeholder="输入消息..."
             />
 
@@ -147,6 +160,22 @@ export default function Composer({
           images={pendingImageUrls}
           index={previewIndex}
           onClose={() => setPreviewIndex(-1)}
+        />
+      )}
+
+      {fullscreenOpen && (
+        <FullscreenEditor
+          title="全屏编辑消息"
+          description="适合编辑较长内容，Ctrl/Cmd + Enter 可快速完成"
+          value={draft}
+          onChange={setDraft}
+          onCancel={() => setFullscreenOpen(false)}
+          onSave={() => setFullscreenOpen(false)}
+          onPaste={handleComposerPaste}
+          onPreviewImage={setPreviewIndex}
+          onRemoveImage={removePendingImage}
+          placeholder="输入消息..."
+          images={pendingImageUrls}
         />
       )}
     </footer>

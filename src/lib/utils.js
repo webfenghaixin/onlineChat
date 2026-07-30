@@ -110,6 +110,8 @@ export function createConversation() {
     id: createId(),
     title: '新的对话',
     updatedAt: now,
+    messageCount: 1,
+    messagesLoaded: true,
     messages: [
       {
         id: createId(),
@@ -127,6 +129,9 @@ export function createDrawConversation() {
     id: createId(),
     title: '新的画图',
     updatedAt: now,
+    messageCount: 0,
+    imageCount: 0,
+    messagesLoaded: true,
     messages: [],
   };
 }
@@ -161,6 +166,7 @@ export function normalizeState(parsed) {
       updatedAt: conv?.updatedAt || Date.now(),
       messageCount: typeof conv?.messageCount === 'number' ? conv.messageCount : messages.length,
       lastPreview: conv?.lastPreview || '',
+      messagesLoaded: typeof conv?.messagesLoaded === 'boolean' ? conv.messagesLoaded : hasMessages,
       messages: hasMessages
         ? messages.map((message) => normalizeMessage(message, conv.updatedAt))
         : [],
@@ -179,6 +185,7 @@ export function normalizeState(parsed) {
       imageCount: typeof conv?.imageCount === 'number'
         ? conv.imageCount
         : messages.filter((m) => m.role === 'assistant' && m.imageUrl).length,
+      messagesLoaded: typeof conv?.messagesLoaded === 'boolean' ? conv.messagesLoaded : hasMessages,
       messages: hasMessages
         ? messages.map((message) => normalizeMessage(message, conv.updatedAt))
         : [],
@@ -227,31 +234,14 @@ export function saveState(state) {
   try {
     const cleanedConversations = state.conversations.map((conversation) => ({
       ...conversation,
-      messages: (conversation.messages || []).map((message) => {
-        if (Array.isArray(message.content)) {
-          return {
-            ...message,
-            content: message.content.map((part) => {
-              if (part?.type === 'image_url' && part.image_url?.url && part.image_url.url.startsWith('data:')) {
-                return null;
-              }
-              return part;
-            }).filter(Boolean),
-          };
-        }
-        return message;
-      }),
+      messages: [],
+      messagesLoaded: false,
     }));
 
     const cleanedDrawConversations = state.drawConversations.map((conversation) => ({
       ...conversation,
-      messages: conversation.messages.map((message) => {
-        if (message.referenceImage) {
-          const { referenceImage, ...rest } = message;
-          return rest;
-        }
-        return message;
-      }),
+      messages: [],
+      messagesLoaded: false,
     }));
 
     localStorage.setItem(

@@ -1,7 +1,15 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, lazy } from 'react';
 import { streamChatCompletion, generateImage, pollDrawTask } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername, fetchBalance, rechargeBalance, fetchConversation, fetchDrawConversation } from './lib/auth';
-import { DRAW_MAX_IMAGES, CHAT_MAX_IMAGES, COST_CHAT, COST_DRAW, BALANCE_RECHARGE_PRESETS } from './lib/constants';
+import {
+  DRAW_MAX_IMAGES,
+  DRAW_MIN_BATCH_COUNT,
+  DRAW_MAX_BATCH_COUNT,
+  CHAT_MAX_IMAGES,
+  COST_CHAT,
+  COST_DRAW,
+  BALANCE_RECHARGE_PRESETS,
+} from './lib/constants';
 import { prepareChatImage } from './lib/image-utils';
 import {
   classNames,
@@ -36,57 +44,70 @@ const DrawPage = lazy(() => import('./components/DrawPage'));
 const RechargeDialog = lazy(() => import('./components/RechargeDialog'));
 
 function mergeCloudData(localData, cloudData) {
-  if (!cloudData || !cloudData.settings) {
+  if (!cloudData) {
     return localData;
   }
 
-  const normalized = normalizeState(cloudData);
-  const localConvsById = new Map((localData.conversations || []).map((c) => [c.id, c]));
-
-  const mergedConversations = normalized.conversations.map((cloudConv) => {
-    if (cloudConv.messages && cloudConv.messages.length > 0) {
-      return cloudConv;
-    }
-    const localConv = localConvsById.get(cloudConv.id);
-    if (localConv && localConv.messages && localConv.messages.length > 0) {
-      return {
-        ...cloudConv,
-        messages: localConv.messages,
-        messageCount: Math.max(cloudConv.messageCount || 0, localConv.messages.length),
-      };
-    }
-    return cloudConv;
+  const hasCloudConversations = Array.isArray(cloudData.conversations) && cloudData.conversations.length > 0;
+  const hasCloudDrawConversations = Array.isArray(cloudData.drawConversations) && cloudData.drawConversations.length > 0;
+  const normalized = normalizeState({
+    settings: cloudData.settings || localData.settings,
+    conversations: hasCloudConversations ? cloudData.conversations : [createConversation()],
+    activeConversationId: hasCloudConversations ? cloudData.activeConversationId : null,
+    drawConversations: hasCloudDrawConversations ? cloudData.drawConversations : [],
+    activeDrawConversationId: hasCloudDrawConversations ? cloudData.activeDrawConversationId : null,
   });
 
-  const localDrawConvsById = new Map((localData.drawConversations || []).map((c) => [c.id, c]));
-
-  const mergedDrawConversations = normalized.drawConversations.map((cloudConv) => {
-    if (cloudConv.messages && cloudConv.messages.length > 0) {
-      return cloudConv;
-    }
-    const localConv = localDrawConvsById.get(cloudConv.id);
-    if (localConv && localConv.messages && localConv.messages.length > 0) {
-      return {
-        ...cloudConv,
-        messages: localConv.messages,
-        messageCount: Math.max(cloudConv.messageCount || 0, localConv.messages.length),
-        imageCount: Math.max(cloudConv.imageCount || 0, localConv.messages.filter((m) => m.role === 'assistant' && m.imageUrl).length),
-      };
-    }
-    return cloudConv;
+  const conversations = normalized.conversations.map((conversation) => {
+    if (!hasCloudConversations) return conversation;
+    return {
+      ...conversation,
+      messages: [],
+      messagesLoaded: (conversation.messageCount || 0) === 0,
+    };
   });
 
-  const localConvIds = new Set((localData.conversations || []).map((c) => c.id));
-  const newConversations = mergedConversations.filter((c) => localConvIds.has(c.id) || c.messages.length > 0);
-  const localOnlyConvs = (localData.conversations || []).filter((c) => !localConvIds.has(c.id));
+  const drawConversations = normalized.drawConversations.map((conversation) => ({
+    ...conversation,
+    messages: [],
+    messagesLoaded: (conversation.messageCount || 0) === 0,
+  }));
+
+  const activeConversationId = conversations.some((conversation) => conversation.id === normalized.activeConversationId)
+    ? normalized.activeConversationId
+    : conversations[0]?.id || null;
+  const activeDrawConversationId = drawConversations.some((conversation) => conversation.id === normalized.activeDrawConversationId)
+    ? normalized.activeDrawConversationId
+    : drawConversations[0]?.id || null;
 
   return {
     settings: normalized.settings,
-    conversations: newConversations,
-    activeConversationId: normalized.activeConversationId,
-    drawConversations: mergedDrawConversations,
-    activeDrawConversationId: normalized.activeDrawConversationId,
+    conversations,
+    activeConversationId,
+    drawConversations,
+    activeDrawConversationId,
   };
+}
+
+function buildCloudSaveConversations(items, dirtyVersions, targetVersion, isDraw = false) {
+  return items.map((conversation) => {
+    const messagesLoaded = (dirtyVersions.get(conversation.id) || 0) <= targetVersion
+      && dirtyVersions.has(conversation.id);
+    const summary = {
+      id: conversation.id,
+      title: conversation.title,
+      updatedAt: conversation.updatedAt,
+      messageCount: conversation.messageCount || 0,
+      messagesLoaded,
+      messages: messagesLoaded ? (conversation.messages || []) : [],
+    };
+    if (isDraw) {
+      summary.imageCount = conversation.imageCount || 0;
+    } else {
+      summary.lastPreview = conversation.lastPreview || '';
+    }
+    return summary;
+  });
 }
 
 export default function App() {
@@ -131,25 +152,74 @@ export default function App() {
   const [balance, setBalance] = useState(null);
   const [rechargeDialogOpen, setRechargeDialogOpen] = useState(false);
   const [rechargeLoading, setRechargeLoading] = useState(false);
-  const [convLoading, setConvLoading] = useState(false);
-  const [drawConvLoading, setDrawConvLoading] = useState(false);
+  const [loadingConversationId, setLoadingConversationId] = useState(null);
+  const [loadingDrawConversationId, setLoadingDrawConversationId] = useState(null);
+  const [cloudDirtyVersion, setCloudDirtyVersion] = useState(0);
+  const [cloudSaveRetryTick, setCloudSaveRetryTick] = useState(0);
 
   const abortControllerRef = useRef(null);
   const drawTaskControllersRef = useRef(new Map());
   const drawSubmissionRef = useRef(null);
   const composerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const chatImageProcessingRef = useRef(false);
   const messagesEndRef = useRef(null);
   const messageListRef = useRef(null);
   const cloudSaveTimerRef = useRef(null);
   const programmaticScrollRef = useRef(false);
-  const cloudSavingRef = useRef(false);
+  const cloudSavingRef = useRef(null);
   const cloudLoadingRef = useRef(false);
+  const cloudSessionRef = useRef(0);
+  const cloudDirtyVersionRef = useRef(0);
+  const cloudSavedVersionRef = useRef(0);
+  const cloudWasBusyRef = useRef(false);
+  const dirtyConversationVersionsRef = useRef(new Map());
+  const dirtyDrawConversationVersionsRef = useRef(new Map());
   const drawFileInputRef = useRef(null);
   const resumedDrawTasksRef = useRef(new Set());
   const activeDrawTaskIdsRef = useRef(new Set());
-  const loadingConvRef = useRef(null);
+  const loadingConversationIdsRef = useRef(new Set());
+  const loadingDrawConversationIdsRef = useRef(new Set());
   const newDrawConvRef = useRef(new Set());
+  const conversationsRef = useRef(conversations);
+  const drawConversationsRef = useRef(drawConversations);
+
+  conversationsRef.current = conversations;
+  drawConversationsRef.current = drawConversations;
+
+  const convLoading = loadingConversationId === activeConversationId;
+  const drawConvLoading = loadingDrawConversationId === activeDrawConversationId;
+
+  const markCloudDirty = useCallback(({ conversationId, conversationIds, drawConversationId, drawConversationIds } = {}) => {
+    const nextVersion = cloudDirtyVersionRef.current + 1;
+    cloudDirtyVersionRef.current = nextVersion;
+    if (conversationId) dirtyConversationVersionsRef.current.set(conversationId, nextVersion);
+    for (const id of (conversationIds || [])) {
+      if (id) dirtyConversationVersionsRef.current.set(id, nextVersion);
+    }
+    if (drawConversationId) dirtyDrawConversationVersionsRef.current.set(drawConversationId, nextVersion);
+    for (const id of (drawConversationIds || [])) {
+      if (id) dirtyDrawConversationVersionsRef.current.set(id, nextVersion);
+    }
+    setCloudDirtyVersion(nextVersion);
+  }, []);
+
+  const resetCloudDirtyState = useCallback(() => {
+    clearTimeout(cloudSaveTimerRef.current);
+    cloudSessionRef.current += 1;
+    cloudSavingRef.current = null;
+    cloudDirtyVersionRef.current = 0;
+    cloudSavedVersionRef.current = 0;
+    cloudWasBusyRef.current = false;
+    dirtyConversationVersionsRef.current.clear();
+    dirtyDrawConversationVersionsRef.current.clear();
+    setCloudDirtyVersion(0);
+  }, []);
+
+  const updateSettings = useCallback((updater) => {
+    setSettings((current) => (typeof updater === 'function' ? updater(current) : updater));
+    markCloudDirty();
+  }, [markCloudDirty]);
 
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId,
@@ -157,7 +227,11 @@ export default function App() {
   const activeMessages = activeConversation?.messages || [];
   const hasUserMessages = activeMessages.some((message) => message.role === 'user');
   const draftHasText = draft.trim().length > 0;
-  const canSend = (draftHasText || pendingImages.length > 0) && !isSending && authState === 'authenticated';
+  const canSend = Boolean(activeConversation?.messagesLoaded)
+    && !convLoading
+    && (draftHasText || pendingImages.length > 0)
+    && !isSending
+    && authState === 'authenticated';
 
   const activeDrawConversation = drawConversations.find(
     (c) => c.id === activeDrawConversationId,
@@ -193,21 +267,25 @@ export default function App() {
   }, [drawConversations]);
 
   const loadConversationMessages = useCallback(async (conversationId) => {
-    const conv = conversations.find((c) => c.id === conversationId);
-    if (conv && conv.messages && conv.messages.length > 0) {
+    const conv = conversationsRef.current.find((c) => c.id === conversationId);
+    if (!conv || conv.messagesLoaded) return;
+    if ((conv.messageCount || 0) === 0) {
+      setConversations((current) => current.map((item) => (
+        item.id === conversationId ? { ...item, messages: [], messagesLoaded: true } : item
+      )));
       return;
     }
-    if (loadingConvRef.current === conversationId) return;
-    loadingConvRef.current = conversationId;
-    setConvLoading(true);
+    if (loadingConversationIdsRef.current.has(conversationId)) return;
+    loadingConversationIdsRef.current.add(conversationId);
+    setLoadingConversationId(conversationId);
     try {
       const data = await fetchConversation(conversationId);
-      if (data.messages) {
+      if (Array.isArray(data.messages)) {
         const normalizedMessages = data.messages.map((m) => normalizeMessage(m, data.updatedAt));
         setConversations((current) =>
           current.map((c) =>
             c.id === conversationId
-              ? { ...c, messages: normalizedMessages, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalizedMessages.length }
+              ? { ...c, messages: normalizedMessages, messagesLoaded: true, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalizedMessages.length }
               : c,
           ),
         );
@@ -215,28 +293,31 @@ export default function App() {
     } catch {
       setErrorText('加载对话失败，请重试');
     } finally {
-      setConvLoading(false);
-      loadingConvRef.current = null;
+      loadingConversationIdsRef.current.delete(conversationId);
+      setLoadingConversationId((current) => (current === conversationId ? null : current));
     }
-  }, [conversations]);
+  }, []);
 
   const loadDrawConversationMessages = useCallback(async (conversationId) => {
-    const conv = drawConversations.find((c) => c.id === conversationId);
-    if (conv && conv.messages && conv.messages.length > 0) {
+    const conv = drawConversationsRef.current.find((c) => c.id === conversationId);
+    if (!conv || conv.messagesLoaded || newDrawConvRef.current.has(conversationId)) return;
+    if ((conv.messageCount || 0) === 0) {
+      setDrawConversations((current) => current.map((item) => (
+        item.id === conversationId ? { ...item, messages: [], messagesLoaded: true } : item
+      )));
       return;
     }
-    if (newDrawConvRef.current.has(conversationId)) {
-      return;
-    }
-    setDrawConvLoading(true);
+    if (loadingDrawConversationIdsRef.current.has(conversationId)) return;
+    loadingDrawConversationIdsRef.current.add(conversationId);
+    setLoadingDrawConversationId(conversationId);
     try {
       const data = await fetchDrawConversation(conversationId);
-      if (data.messages) {
+      if (Array.isArray(data.messages)) {
         const normalizedMessages = data.messages.map((m) => normalizeMessage(m, data.updatedAt));
         setDrawConversations((current) =>
           current.map((c) =>
             c.id === conversationId
-              ? { ...c, messages: normalizedMessages, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalizedMessages.length, imageCount: normalizedMessages.filter((m) => m.role === 'assistant' && m.imageUrl).length }
+              ? { ...c, messages: normalizedMessages, messagesLoaded: true, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalizedMessages.length, imageCount: normalizedMessages.filter((m) => m.role === 'assistant' && m.imageUrl).length }
               : c,
           ),
         );
@@ -244,30 +325,31 @@ export default function App() {
     } catch {
       setErrorText('加载画图记录失败，请重试');
     } finally {
-      setDrawConvLoading(false);
+      loadingDrawConversationIdsRef.current.delete(conversationId);
+      setLoadingDrawConversationId((current) => (current === conversationId ? null : current));
     }
-  }, [drawConversations]);
+  }, []);
 
   const switchConversation = useCallback((conversationId) => {
-    setActiveConversationId(conversationId);
-    setDrawerOpen(false);
-    const conv = conversations.find((c) => c.id === conversationId);
-    if (conv && (!conv.messages || conv.messages.length === 0)) {
-      loadConversationMessages(conversationId);
+    if (conversationId !== activeConversationId) {
+      setActiveConversationId(conversationId);
+      markCloudDirty();
     }
-  }, [conversations, loadConversationMessages]);
+    setDrawerOpen(false);
+    loadConversationMessages(conversationId);
+  }, [activeConversationId, loadConversationMessages, markCloudDirty]);
 
   const switchDrawConversation = useCallback((conversationId) => {
-    setActiveDrawConversationId(conversationId);
+    if (conversationId !== activeDrawConversationId) {
+      setActiveDrawConversationId(conversationId);
+      markCloudDirty();
+    }
     setDrawDrawerOpen(false);
     setErrorText('');
     setDrawSelectMode(false);
     setDrawSelectedMessageIds(new Set());
-    const conv = drawConversations.find((c) => c.id === conversationId);
-    if (conv && (!conv.messages || conv.messages.length === 0)) {
-      loadDrawConversationMessages(conversationId);
-    }
-  }, [drawConversations, loadDrawConversationMessages]);
+    loadDrawConversationMessages(conversationId);
+  }, [activeDrawConversationId, loadDrawConversationMessages, markCloudDirty]);
 
   // 修正 activeDrawConversationId 如果指向的对话已被删除
   useEffect(() => {
@@ -277,15 +359,6 @@ export default function App() {
       setActiveDrawConversationId(null);
     }
   }, [drawConversations, activeDrawConversationId]);
-
-  useEffect(() => {
-    if (drawConversations.length > 0 && activeDrawConversationId) {
-      const conv = drawConversations.find((c) => c.id === activeDrawConversationId);
-      if (conv && (!conv.messages || conv.messages.length === 0) && !drawConvLoading) {
-        loadDrawConversationMessages(activeDrawConversationId);
-      }
-    }
-  }, [activeDrawConversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 切换对话时重置可见消息数
   useEffect(() => {
@@ -317,7 +390,6 @@ export default function App() {
   }, [activeMessages]);
 
   useEffect(() => {
-    // 始终同步到 localStorage（即时、无网络开销）
     saveState({
       settings,
       conversations,
@@ -325,45 +397,75 @@ export default function App() {
       drawConversations,
       activeDrawConversationId,
     });
+  }, [settings, conversations, activeConversationId, drawConversations, activeDrawConversationId]);
 
-    // 云端同步条件：已登录 + 非流式输出中 + 无正在进行的同步
-    if (authState !== 'authenticated' || isSending || isGenerating || cloudSavingRef.current) return;
-
-    clearTimeout(cloudSaveTimerRef.current);
-    cloudSaveTimerRef.current = setTimeout(() => {
-      if (cloudSavingRef.current) return;
-      cloudSavingRef.current = true;
-      saveToCloud({ settings, conversations, activeConversationId, drawConversations, activeDrawConversationId })
-        .catch(() => {})
-        .finally(() => { cloudSavingRef.current = false; });
-    }, 8000);
-  }, [
-    settings,
-    conversations,
-    activeConversationId,
-    drawConversations,
-    activeDrawConversationId,
-    authState,
-    isSending,
-    isGenerating,
-  ]);
-
-  // 流式输出结束后立即触发一次云端同步
   useEffect(() => {
-    if (!isSending && !isGenerating && authState === 'authenticated') {
-      clearTimeout(cloudSaveTimerRef.current);
-      cloudSaveTimerRef.current = setTimeout(() => {
-        if (cloudSavingRef.current) return;
-        cloudSavingRef.current = true;
-        saveToCloud({ settings, conversations, activeConversationId, drawConversations, activeDrawConversationId })
-          .catch(() => {})
-          .finally(() => { cloudSavingRef.current = false; });
-      }, 2000);
+    const isBusy = isSending || isGenerating;
+    const wasBusy = cloudWasBusyRef.current;
+    cloudWasBusyRef.current = isBusy;
+    clearTimeout(cloudSaveTimerRef.current);
+    if (
+      authState !== 'authenticated'
+      || isBusy
+      || cloudDirtyVersionRef.current <= cloudSavedVersionRef.current
+    ) {
+      return undefined;
     }
+
+    const targetVersion = cloudDirtyVersionRef.current;
+    const saveSession = cloudSessionRef.current;
+    const conversationVersions = new Map(dirtyConversationVersionsRef.current);
+    const drawConversationVersions = new Map(dirtyDrawConversationVersionsRef.current);
+    const payload = {
+      settings,
+      conversations: buildCloudSaveConversations(conversations, conversationVersions, targetVersion),
+      activeConversationId,
+      drawConversations: buildCloudSaveConversations(drawConversations, drawConversationVersions, targetVersion, true),
+      activeDrawConversationId,
+    };
+    const delay = wasBusy ? 2000 : 8000;
+
+    cloudSaveTimerRef.current = window.setTimeout(() => {
+      if (cloudSavingRef.current === saveSession) return;
+      cloudSavingRef.current = saveSession;
+      let saveSucceeded = false;
+      saveToCloud(payload)
+        .then(() => {
+          if (cloudSessionRef.current !== saveSession) return;
+          saveSucceeded = true;
+          cloudSavedVersionRef.current = Math.max(cloudSavedVersionRef.current, targetVersion);
+          for (const [id, version] of conversationVersions) {
+            if (dirtyConversationVersionsRef.current.get(id) === version) {
+              dirtyConversationVersionsRef.current.delete(id);
+            }
+          }
+          for (const [id, version] of drawConversationVersions) {
+            if (dirtyDrawConversationVersionsRef.current.get(id) === version) {
+              dirtyDrawConversationVersionsRef.current.delete(id);
+            }
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (cloudSavingRef.current === saveSession) {
+            cloudSavingRef.current = null;
+          }
+          const hasUnsavedFollowUp = saveSucceeded
+            ? cloudDirtyVersionRef.current > cloudSavedVersionRef.current
+            : cloudDirtyVersionRef.current > targetVersion;
+          if (cloudSessionRef.current === saveSession && hasUnsavedFollowUp) {
+            setCloudSaveRetryTick((current) => current + 1);
+          }
+        });
+    }, delay);
+
+    return () => clearTimeout(cloudSaveTimerRef.current);
   }, [
+    authState,
     isSending,
     isGenerating,
-    authState,
+    cloudDirtyVersion,
+    cloudSaveRetryTick,
     settings,
     conversations,
     activeConversationId,
@@ -380,18 +482,26 @@ export default function App() {
     // 用 ref 去重，避免 StrictMode 双挂载导致 loadFromCloud 被调用两次
     if (cloudLoadingRef.current) return;
     cloudLoadingRef.current = true;
+    resetCloudDirtyState();
 
     let settleTimer = null;
     setAuthLoadingActive(true);
     loadFromCloud()
       .then((data) => {
-        if (data.settings) {
-          const merged = mergeCloudData(loadedState, data);
-          setSettings(merged.settings);
-          setConversations(merged.conversations);
-          setActiveConversationId(merged.activeConversationId);
-          setDrawConversations(merged.drawConversations);
-          setActiveDrawConversationId(merged.activeDrawConversationId);
+        const merged = mergeCloudData(loadedState, data);
+        conversationsRef.current = merged.conversations;
+        drawConversationsRef.current = merged.drawConversations;
+        setSettings(merged.settings);
+        setConversations(merged.conversations);
+        setActiveConversationId(merged.activeConversationId);
+        setDrawConversations(merged.drawConversations);
+        setActiveDrawConversationId(merged.activeDrawConversationId);
+        if ((!Array.isArray(data.conversations) || data.conversations.length === 0) && merged.activeConversationId) {
+          // 新账号的默认对话不在登录时立即保存，但在之后第一次真实变更时一并持久化。
+          dirtyConversationVersionsRef.current.set(merged.activeConversationId, 1);
+        }
+        if (merged.activeConversationId) {
+          loadConversationMessages(merged.activeConversationId);
         }
         setAuthLoadingActive(false);
         settleTimer = window.setTimeout(() => {
@@ -635,6 +745,7 @@ export default function App() {
   }, [copiedMessageId]);
 
   function updateConversation(conversationId, updater) {
+    markCloudDirty({ conversationId });
     setConversations((current) =>
       current.map((conversation) => {
         if (conversation.id !== conversationId) {
@@ -645,6 +756,7 @@ export default function App() {
         const msgs = nextConversation.messages || [];
         return {
           ...nextConversation,
+          messagesLoaded: true,
           title: buildConversationTitle(msgs),
           updatedAt: Date.now(),
           messageCount: msgs.length,
@@ -660,6 +772,7 @@ export default function App() {
 
   function createNewConversation() {
     const conversation = createConversation();
+    markCloudDirty({ conversationId: conversation.id });
     setConversations((current) => [conversation, ...current]);
     setActiveConversationId(conversation.id);
     setDraft('');
@@ -670,23 +783,24 @@ export default function App() {
   }
 
   function removeConversation(conversationId) {
-    setConversations((current) => {
-      const remaining = current.filter((item) => item.id !== conversationId);
-      if (remaining.length) {
-        if (conversationId === activeConversationId) {
-          const nextActive = remaining[0];
-          setActiveConversationId(nextActive.id);
-          if (!nextActive.messages || nextActive.messages.length === 0) {
-            loadConversationMessages(nextActive.id);
-          }
+    const remaining = conversations.filter((item) => item.id !== conversationId);
+    if (remaining.length) {
+      markCloudDirty();
+      setConversations(remaining);
+      if (conversationId === activeConversationId) {
+        const nextActive = remaining[0];
+        setActiveConversationId(nextActive.id);
+        if (!nextActive.messagesLoaded) {
+          loadConversationMessages(nextActive.id);
         }
-        return remaining;
       }
+      return;
+    }
 
-      const fallback = createConversation();
-      setActiveConversationId(fallback.id);
-      return [fallback];
-    });
+    const fallback = createConversation();
+    markCloudDirty({ conversationId: fallback.id });
+    setConversations([fallback]);
+    setActiveConversationId(fallback.id);
   }
 
   function stopStreaming() {
@@ -706,11 +820,12 @@ export default function App() {
     setDrawSelectedMessageIds(new Set());
     if (!activeDrawConversationId || !drawConversations.find((c) => c.id === activeDrawConversationId)) {
       const conv = createDrawConversation();
+      markCloudDirty({ drawConversationId: conv.id });
       setDrawConversations([conv]);
       setActiveDrawConversationId(conv.id);
     } else {
       const conv = drawConversations.find((c) => c.id === activeDrawConversationId);
-      if (conv && (!conv.messages || conv.messages.length === 0)) {
+      if (conv && !conv.messagesLoaded) {
         loadDrawConversationMessages(activeDrawConversationId);
       }
     }
@@ -730,6 +845,7 @@ export default function App() {
   function createNewDrawConversation() {
     const conv = createDrawConversation();
     newDrawConvRef.current.add(conv.id);
+    markCloudDirty({ drawConversationId: conv.id });
     setDrawConversations((prev) => [conv, ...prev]);
     setActiveDrawConversationId(conv.id);
     setDrawPrompt('');
@@ -743,13 +859,14 @@ export default function App() {
 
   function removeDrawConversation(conversationId) {
     newDrawConvRef.current.delete(conversationId);
+    markCloudDirty();
     setDrawConversations((current) => {
       const remaining = current.filter((item) => item.id !== conversationId);
       if (remaining.length) {
         if (conversationId === activeDrawConversationId) {
           const nextActive = remaining[0];
           setActiveDrawConversationId(nextActive.id);
-          if (!nextActive.messages || nextActive.messages.length === 0) {
+          if (!nextActive.messagesLoaded) {
             loadDrawConversationMessages(nextActive.id);
           }
         }
@@ -766,6 +883,7 @@ export default function App() {
   }
 
   function updateDrawConversation(conversationId, updater) {
+    markCloudDirty({ drawConversationId: conversationId });
     setDrawConversations((current) =>
       current.map((conv) => {
         if (conv.id !== conversationId) return conv;
@@ -773,6 +891,7 @@ export default function App() {
         const msgs = next.messages || [];
         return {
           ...next,
+          messagesLoaded: true,
           updatedAt: Date.now(),
           messageCount: msgs.length,
           imageCount: msgs.filter((m) => m.role === 'assistant' && m.imageUrl).length,
@@ -782,6 +901,11 @@ export default function App() {
   }
 
   function enforceDrawLimit() {
+    markCloudDirty({
+      drawConversationIds: drawConversations
+        .filter((conversation) => conversation.messagesLoaded)
+        .map((conversation) => conversation.id),
+    });
     setDrawConversations((current) => {
       let totalImages = 0;
       for (const c of current) {
@@ -791,11 +915,11 @@ export default function App() {
           totalImages += (c.messages || []).filter((m) => m.role === 'assistant' && m.imageUrl).length;
         }
       }
-      if (totalImages <= 20) return current;
+      if (totalImages <= DRAW_MAX_IMAGES) return current;
 
       const result = current.map((c) => ({ ...c, messages: [...(c.messages || [])] }));
 
-      while (totalImages > 20 && result.length > 0) {
+      while (totalImages > DRAW_MAX_IMAGES && result.length > 0) {
         let oldestConvIdx = -1;
         let oldestMsgIdx = -1;
         let oldestTime = Infinity;
@@ -814,6 +938,15 @@ export default function App() {
         if (oldestConvIdx < 0) break;
 
         const conv = result[oldestConvIdx];
+        const oldestMessage = conv.messages[oldestMsgIdx];
+        if (oldestMessage.batchId) {
+          const removedImageCount = conv.messages.filter(
+            (message) => message.batchId === oldestMessage.batchId && message.role === 'assistant' && message.imageUrl,
+          ).length;
+          conv.messages = conv.messages.filter((message) => message.batchId !== oldestMessage.batchId);
+          totalImages -= removedImageCount;
+          continue;
+        }
         conv.messages.splice(oldestMsgIdx, 1);
         if (oldestMsgIdx > 0 && conv.messages[oldestMsgIdx - 1].role === 'user') {
           conv.messages.splice(oldestMsgIdx - 1, 1);
@@ -821,7 +954,7 @@ export default function App() {
         totalImages--;
       }
 
-      return result.filter((c) => (c.messages || []).length > 0);
+      return result.filter((c) => !c.messagesLoaded || (c.messages || []).length > 0);
     });
   }
 
@@ -847,11 +980,15 @@ export default function App() {
 
   async function handleDraw() {
     const prompt = drawPrompt.trim();
-    if (!prompt || drawSubmissionRef.current || authState !== 'authenticated') {
+    if (!prompt || drawSubmissionRef.current || drawConvLoading || !activeDrawConversation?.messagesLoaded || authState !== 'authenticated') {
       return;
     }
 
     const referenceImages = drawPendingImages.map((img) => img.url).filter(Boolean);
+    const imageCount = Math.min(
+      DRAW_MAX_BATCH_COUNT,
+      Math.max(DRAW_MIN_BATCH_COUNT, Number(settings.drawImageCount) || 1),
+    );
     await _executeDraw({
       prompt,
       referenceImages,
@@ -859,6 +996,7 @@ export default function App() {
       model: settings.drawModel || 'gpt-image-2',
       size: settings.drawSize || '1024x1024',
       quality: settings.drawQuality || 'medium',
+      imageCount,
     });
   }
 
@@ -876,12 +1014,13 @@ export default function App() {
         : [];
 
     await _executeDraw({
-      prompt: userMsg.content || '',
+      prompt: getTextParts(userMsg.content),
       referenceImages,
       targetConvId: conv.id,
       model: userMsg.model || settings.drawModel || 'gpt-image-2',
       size: userMsg.size || settings.drawSize || '1024x1024',
       quality: userMsg.quality || settings.drawQuality || 'medium',
+      imageCount: userMsg.imageCount || 1,
     });
   }
 
@@ -892,7 +1031,7 @@ export default function App() {
     const userMsg = conv.messages.find((m) => m.id === userMessageId);
     if (!userMsg) return;
 
-    setDrawPrompt(userMsg.content || '');
+    setDrawPrompt(getTextParts(userMsg.content));
 
     const referenceImages = Array.isArray(userMsg.referenceImages) && userMsg.referenceImages.length > 0
       ? userMsg.referenceImages
@@ -901,13 +1040,29 @@ export default function App() {
         : [];
 
     setDrawPendingImages(referenceImages.map((url, i) => ({ name: `参考图${i + 1}`, url })));
+    updateSettings((current) => ({
+      ...current,
+      drawModel: userMsg.model || current.drawModel,
+      drawSize: userMsg.size || current.drawSize,
+      drawQuality: userMsg.quality || current.drawQuality,
+      drawImageCount: Math.min(
+        DRAW_MAX_BATCH_COUNT,
+        Math.max(DRAW_MIN_BATCH_COUNT, Number(userMsg.imageCount) || 1),
+      ),
+    }));
   }
 
-  async function _executeDraw({ prompt, referenceImages, targetConvId, model, size, quality }) {
+  async function _executeDraw({ prompt, referenceImages, targetConvId, model, size, quality, imageCount = 1 }) {
     if (!prompt || drawSubmissionRef.current || authState !== 'authenticated') return;
 
-    if (balance !== null && balance < COST_DRAW - 0.0001) {
-      setErrorText(`余额不足，制图需要 ${COST_DRAW} 元，当前余额 ${balance.toFixed(2)} 元`);
+    const requestedCount = Math.min(
+      DRAW_MAX_BATCH_COUNT,
+      Math.max(DRAW_MIN_BATCH_COUNT, Number(imageCount) || 1),
+    );
+    const totalCost = Number((COST_DRAW * requestedCount).toFixed(2));
+
+    if (balance !== null && balance < totalCost - 0.0001) {
+      setErrorText(`余额不足，生成 ${requestedCount} 张图需要 ${totalCost.toFixed(2)} 元，当前余额 ${balance.toFixed(2)} 元`);
       setRechargeDialogOpen(true);
       return;
     }
@@ -921,19 +1076,21 @@ export default function App() {
       setIsDrawSubmitting(false);
     };
 
-    if (drawImageCount >= DRAW_MAX_IMAGES) setDrawLimitWarning(true);
+    if (drawImageCount + requestedCount > DRAW_MAX_IMAGES) setDrawLimitWarning(true);
 
     setErrorText('');
     setStatusText('正在提交图片任务');
 
     if (!targetConvId || !drawConversations.find((c) => c.id === targetConvId)) {
       const conv = createDrawConversation();
+      markCloudDirty({ drawConversationId: conv.id });
       setDrawConversations((prev) => [conv, ...prev]);
       setActiveDrawConversationId(conv.id);
       targetConvId = conv.id;
     }
 
     const now = Date.now();
+    const batchId = createId();
     const userMessage = {
       id: createId(),
       role: 'user',
@@ -943,10 +1100,12 @@ export default function App() {
       model,
       size,
       quality,
+      batchId,
+      imageCount: requestedCount,
       createdAt: now,
     };
 
-    const assistantMessage = {
+    const assistantMessages = Array.from({ length: requestedCount }, (_, index) => ({
       id: createId(),
       role: 'assistant',
       imageUrl: null,
@@ -954,97 +1113,134 @@ export default function App() {
       model,
       size,
       quality,
+      batchId,
+      batchIndex: index,
+      imageCount: requestedCount,
       pending: true,
-      createdAt: now + 1,
-    };
+      createdAt: now + index + 1,
+    }));
 
     updateDrawConversation(targetConvId, (conv) => ({
       ...conv,
       title: (conv.messages || []).length === 0 ? prompt.slice(0, 18) : conv.title,
-      messages: [...(conv.messages || []), userMessage, assistantMessage],
+      messages: [...(conv.messages || []), userMessage, ...assistantMessages],
     }));
 
     setDrawPrompt('');
     setDrawPendingImages([]);
 
-    const controller = new AbortController();
-    drawTaskControllersRef.current.set(assistantMessage.id, controller);
-    let currentTaskId = '';
     const activeConv = drawConversations.find((c) => c.id === targetConvId);
+    let startedTaskCount = 0;
+    let settledLaunchCount = 0;
+
+    const runDrawTask = async (assistantMessage) => {
+      const controller = new AbortController();
+      drawTaskControllersRef.current.set(assistantMessage.id, controller);
+      let currentTaskId = '';
+      let launchSettled = false;
+      const settleLaunch = () => {
+        if (launchSettled) return;
+        launchSettled = true;
+        settledLaunchCount += 1;
+        if (settledLaunchCount >= requestedCount) releaseSubmission();
+      };
+
+      try {
+        await generateImage({
+          settings,
+          prompt,
+          referenceImages,
+          size,
+          quality,
+          signal: controller.signal,
+          taskMetadata: {
+            conversationId: targetConvId,
+            conversationTitle: activeConv?.id === targetConvId ? activeConv.title : prompt.slice(0, 18),
+            activeDrawConversationId: targetConvId,
+            userMessage: referenceImages.length > 0
+              ? { ...userMessage, referenceImage: undefined, referenceImages: undefined }
+              : userMessage,
+            assistantMessage,
+          },
+          onTaskStart: (taskId) => {
+            currentTaskId = taskId;
+            startedTaskCount += 1;
+            settleLaunch();
+            activeDrawTaskIdsRef.current.add(taskId);
+            updateDrawConversation(targetConvId, (conv) => ({
+              ...conv,
+              messages: (conv.messages || []).map((message) =>
+                message.id === assistantMessage.id ? { ...message, taskId, pending: true } : message,
+              ),
+            }));
+            setStatusText(`已提交 ${startedTaskCount}/${requestedCount} 个图片任务`);
+          },
+          onImage: (imageUrl, taskTiming) => {
+            const durationSeconds = resolveDrawDurationSeconds(taskTiming, now);
+            updateDrawConversation(targetConvId, (conv) => ({
+              ...conv,
+              messages: (conv.messages || []).map((message) =>
+                message.id === assistantMessage.id
+                  ? { ...message, imageUrl, durationSeconds, error: undefined, pending: false }
+                  : message,
+              ),
+            }));
+            enforceDrawLimit();
+          },
+        });
+        return { ok: true };
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          const nextErrorText = error.message || '图片生成失败，请重试。';
+          updateDrawConversation(targetConvId, (conv) => ({
+            ...conv,
+            messages: (conv.messages || []).map((message) =>
+              message.id === assistantMessage.id
+                ? { ...message, error: nextErrorText, pending: false }
+                : message,
+            ),
+          }));
+          if (error.code === 'INSUFFICIENT_BALANCE' || error.status === 402) {
+            setRechargeDialogOpen(true);
+          }
+          return { ok: false, error: nextErrorText };
+        }
+
+        updateDrawConversation(targetConvId, (conv) => {
+          const remaining = (conv.messages || []).filter((message) => message.id !== assistantMessage.id);
+          const hasBatchResult = remaining.some((message) => message.role === 'assistant' && message.batchId === batchId);
+          return {
+            ...conv,
+            messages: hasBatchResult ? remaining : remaining.filter((message) => message.id !== userMessage.id),
+          };
+        });
+        return { ok: false, aborted: true };
+      } finally {
+        settleLaunch();
+        if (drawTaskControllersRef.current.get(assistantMessage.id) === controller) {
+          drawTaskControllersRef.current.delete(assistantMessage.id);
+        }
+        if (currentTaskId) activeDrawTaskIdsRef.current.delete(currentTaskId);
+      }
+    };
 
     try {
-      await generateImage({
-        settings,
-        prompt,
-        referenceImages,
-        size,
-        quality,
-        signal: controller.signal,
-        taskMetadata: {
-          conversationId: targetConvId,
-          conversationTitle: activeConv?.id === targetConvId ? activeConv.title : prompt.slice(0, 18),
-          activeDrawConversationId: targetConvId,
-          userMessage: referenceImages.length > 0
-            ? { ...userMessage, referenceImage: undefined, referenceImages: undefined }
-            : userMessage,
-          assistantMessage,
-        },
-        onTaskStart: (taskId) => {
-          currentTaskId = taskId;
-          activeDrawTaskIdsRef.current.add(taskId);
-          updateDrawConversation(targetConvId, (conv) => ({
-            ...conv,
-            messages: (conv.messages || []).map((m) =>
-              m.id === assistantMessage.id ? { ...m, taskId, pending: true } : m,
-            ),
-          }));
-          setStatusText('图片任务已提交，可继续发起制图');
-          releaseSubmission();
-        },
-        onImage: (imageUrl, taskTiming) => {
-          const durationSeconds = resolveDrawDurationSeconds(taskTiming, now);
-          updateDrawConversation(targetConvId, (conv) => ({
-            ...conv,
-            messages: (conv.messages || []).map((m) =>
-              m.id === assistantMessage.id
-                ? { ...m, imageUrl, durationSeconds, error: undefined, pending: false }
-                : m,
-            ),
-          }));
-          enforceDrawLimit();
-        },
-      });
+      const results = await Promise.all(assistantMessages.map((message) => runDrawTask(message)));
+      const successCount = results.filter((result) => result.ok).length;
+      const failedResults = results.filter((result) => !result.ok && !result.aborted);
 
-      setStatusText('图片生成完成');
-    } catch (error) {
-      if (error.name !== 'AbortError') {
-        const nextErrorText = error.message || '图片生成失败，请重试。';
-        setErrorText(nextErrorText);
+      if (successCount === requestedCount) {
+        setStatusText(`${requestedCount} 张图片生成完成`);
+      } else if (successCount > 0) {
+        setStatusText(`已完成 ${successCount}/${requestedCount} 张图片`);
+        setErrorText(`有 ${failedResults.length} 张图片生成失败，可在结果中查看。`);
+      } else if (failedResults.length > 0) {
         setStatusText('图片生成失败');
-        if (error.code === 'INSUFFICIENT_BALANCE' || error.status === 402) {
-          refreshBalance();
-          setRechargeDialogOpen(true);
-        }
-        updateDrawConversation(targetConvId, (conv) => ({
-          ...conv,
-          messages: (conv.messages || []).map((m) =>
-            m.id === assistantMessage.id ? { ...m, error: nextErrorText, pending: false } : m,
-          ),
-        }));
+        setErrorText(failedResults[0].error);
       } else {
         setStatusText('图片生成已停止');
-        updateDrawConversation(targetConvId, (conv) => ({
-          ...conv,
-          messages: (conv.messages || []).filter((m) => m.id !== userMessage.id && m.id !== assistantMessage.id),
-        }));
       }
     } finally {
-      if (drawTaskControllersRef.current.get(assistantMessage.id) === controller) {
-        drawTaskControllersRef.current.delete(assistantMessage.id);
-      }
-      if (currentTaskId) {
-        activeDrawTaskIdsRef.current.delete(currentTaskId);
-      }
       releaseSubmission();
       refreshBalance();
     }
@@ -1097,6 +1293,13 @@ export default function App() {
       const msgs = conv.messages || [];
       const idx = msgs.findIndex((m) => m.id === messageId);
       if (idx < 0) return conv;
+      const targetMessage = msgs[idx];
+      if (targetMessage.batchId) {
+        return {
+          ...conv,
+          messages: msgs.filter((message) => message.batchId !== targetMessage.batchId),
+        };
+      }
       const newMessages = [...msgs];
       if (newMessages[idx].role === 'assistant' && idx > 0 && newMessages[idx - 1].role === 'user') {
         newMessages.splice(idx - 1, 2);
@@ -1107,7 +1310,9 @@ export default function App() {
       }
       return { ...conv, messages: newMessages };
     });
-    setDrawConversations((current) => current.filter((c) => (c.messages || []).length > 0));
+    setDrawConversations((current) => current.filter((c) => (
+      c.id !== conversationId || !c.messagesLoaded || (c.messages || []).length > 0
+    )));
     setDeleteDrawTarget(null);
   }
 
@@ -1159,7 +1364,13 @@ export default function App() {
     const textContent = getTextParts(content).trim();
     const hasImage = getImageParts(content).length > 0;
 
-    if ((!textContent && !hasImage) || isSending || !activeConversation || authState !== 'authenticated') {
+    if (
+      (!textContent && !hasImage)
+      || isSending
+      || convLoading
+      || !activeConversation?.messagesLoaded
+      || authState !== 'authenticated'
+    ) {
       return;
     }
 
@@ -1391,6 +1602,13 @@ export default function App() {
       msgs.forEach((message, index) => {
         if (!drawSelectedMessageIds.has(message.id)) return;
 
+        if (message.batchId) {
+          msgs.forEach((batchMessage) => {
+            if (batchMessage.batchId === message.batchId) removableIds.add(batchMessage.id);
+          });
+          return;
+        }
+
         if (message.role === 'user') {
           const nextMessage = msgs[index + 1];
           if (nextMessage?.role === 'assistant') {
@@ -1419,6 +1637,7 @@ export default function App() {
 
   function handleLogout() {
     clearToken();
+    resetCloudDirtyState();
     setCurrentUser('');
     setAuthState('auth-form');
     setDrawerOpen(false);
@@ -1428,6 +1647,7 @@ export default function App() {
   // 监听 401 事件，自动跳回登录页
   useEffect(() => {
     function onUnauthorized() {
+      resetCloudDirtyState();
       setCurrentUser('');
       setAuthState('auth-form');
       setDrawerOpen(false);
@@ -1436,7 +1656,7 @@ export default function App() {
     }
     window.addEventListener('auth:unauthorized', onUnauthorized);
     return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
-  }, []);
+  }, [resetCloudDirtyState]);
 
   function handleUploadClick() {
     if (authState !== 'authenticated') {
@@ -1445,14 +1665,19 @@ export default function App() {
     fileInputRef.current?.click();
   }
 
-  async function handleFileChange(event) {
-    const files = Array.from(event.target.files || []);
-    event.target.value = '';
-    if (files.length === 0) {
+  async function processChatImageFiles(files) {
+    if (authState !== 'authenticated') return;
+    if (chatImageProcessingRef.current) {
+      setErrorText('图片正在处理中，请稍候。');
       return;
     }
 
-    const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+    const normalizedFiles = Array.from(files || []);
+    if (normalizedFiles.length === 0) {
+      return;
+    }
+
+    const imageFiles = normalizedFiles.filter((file) => file?.type?.startsWith('image/'));
     if (imageFiles.length === 0) {
       setErrorText('只能上传图片文件。');
       return;
@@ -1471,13 +1696,14 @@ export default function App() {
       setErrorText('');
     }
 
+    chatImageProcessingRef.current = true;
     setImageProcessing(true);
     setStatusText('正在处理图片');
     try {
       const results = await Promise.all(
         filesToProcess.map(async (file) => {
           const optimizedUrl = await prepareChatImage(file);
-          return { name: file.name, url: optimizedUrl };
+          return { name: file.name || `clipboard-image-${Date.now()}`, url: optimizedUrl };
         }),
       );
       setPendingImages((prev) => [...prev, ...results]);
@@ -1486,8 +1712,32 @@ export default function App() {
       setErrorText(error.message || '图片处理失败，请重试。');
       setStatusText('图片处理失败');
     } finally {
+      chatImageProcessingRef.current = false;
       setImageProcessing(false);
     }
+  }
+
+  function handleFileChange(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    void processChatImageFiles(files);
+  }
+
+  function handleComposerPaste(event) {
+    const clipboardData = event.clipboardData;
+    if (!clipboardData) return;
+
+    const itemImages = Array.from(clipboardData.items || [])
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+    const fileImages = Array.from(clipboardData.files || [])
+      .filter((file) => file?.type?.startsWith('image/'));
+    const imageFiles = itemImages.length > 0 ? itemImages : fileImages;
+
+    if (imageFiles.length === 0) return;
+    event.preventDefault();
+    void processChatImageFiles(imageFiles);
   }
 
   function removePendingImage(index) {
@@ -1537,7 +1787,7 @@ export default function App() {
         setDeleteConversationTarget={setDeleteConversationTarget}
         createNewConversation={createNewConversation}
         settings={settings}
-        setSettings={setSettings}
+        setSettings={updateSettings}
         handleLogout={handleLogout}
       />
 
@@ -1675,6 +1925,7 @@ export default function App() {
           composerRef={composerRef}
           fileInputRef={fileInputRef}
           handleFileChange={handleFileChange}
+          handleComposerPaste={handleComposerPaste}
         />
       </main>
 
@@ -1688,7 +1939,7 @@ export default function App() {
         >
           <DrawPage
             settings={settings}
-            setSettings={setSettings}
+            setSettings={updateSettings}
             drawConversations={drawConversations}
             activeDrawConversationId={activeDrawConversationId}
             switchDrawConversation={switchDrawConversation}

@@ -17,6 +17,8 @@ export const DRAW_REFERENCE_MAX_DIMENSION = 1280;
 export const DRAW_REFERENCE_MAX_BYTES = 1 * 1024 * 1024;
 export const DRAW_REFERENCE_MIN_QUALITY = 0.5;
 export const DRAW_MAX_REFERENCE_IMAGES = 3;
+export const DRAW_MIN_BATCH_COUNT = 1;
+export const DRAW_MAX_BATCH_COUNT = 20;
 
 // 聊天页面上传图片的压缩参数
 // Vercel Serverless Function 请求体上限 4.5MB，base64 编码会膨胀约 33%，
@@ -99,4 +101,5 @@ export const defaultSettings = {
   drawQuality: 'medium',
   drawModel: 'gpt-image-2',
   drawApiMode: 'images',
+  drawImageCount: 1,
 };

@@ -39,6 +39,13 @@ function mergeDrawMessage(incomingMessage, existingMessage) {
   };
 }
 
+function shouldWriteMessages(conversation, messages) {
+  if (conversation?.messagesLoaded === true) return true;
+  if (conversation?.messagesLoaded === false) return false;
+  // 兼容旧客户端：未传 messagesLoaded 时延续原来的非空数组写入规则。
+  return messages.length > 0;
+}
+
 export default async function handler(request) {
   if (request.method === 'OPTIONS') return handleOptions();
   if (request.method !== 'POST') return jsonResponse(405, { error: '仅支持 POST 请求' });
@@ -92,7 +99,7 @@ export default async function handler(request) {
 
   for (const conv of conversations) {
     const msgs = conv.messages || [];
-    if (msgs.length > 0) {
+    if (shouldWriteMessages(conv, msgs)) {
       convWritePromises.push(
         setRedisJson(redis, `data:${username}:conv:${conv.id}`, {
           id: conv.id,
@@ -109,7 +116,7 @@ export default async function handler(request) {
         lastPreview: buildLastPreview(msgs),
       });
     } else {
-      // 未加载消息的对话，保留 meta 中已有的摘要
+      // 未加载或未变更正文的对话，保留 meta 中已有的摘要。
       const existing = existingConvMeta.get(conv.id);
       convSummaries.push(existing || {
         id: conv.id,
@@ -128,7 +135,10 @@ export default async function handler(request) {
 
   // 先读取需要 merge 的画图对话
   const drawConvIdsWithMessages = (drawConversations || [])
-    .filter((conv) => (conv.messages || []).length > 0)
+    .filter((conv) => {
+      const messages = conv.messages || [];
+      return shouldWriteMessages(conv, messages) && messages.length > 0;
+    })
     .map((conv) => conv.id);
 
   const existingDrawDataMap = new Map();
@@ -144,7 +154,7 @@ export default async function handler(request) {
   const drawWritePromises = [];
   for (const conv of (drawConversations || [])) {
     const msgs = conv.messages || [];
-    if (msgs.length > 0) {
+    if (shouldWriteMessages(conv, msgs)) {
       // merge 保留画图任务状态（imageUrl/taskId 等）
       const existing = existingDrawDataMap.get(conv.id);
       let messagesToSave = msgs;

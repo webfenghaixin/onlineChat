@@ -36,45 +36,16 @@ export default async function handler(request) {
   const activeId = meta.activeConversationId || (conversations[0]?.id ?? null);
   const activeDrawId = meta.activeDrawConversationId || (drawConversations[0]?.id ?? null);
 
-  // 只加载活动聊天对话的完整消息
+  // load 只返回会话目录。完整消息由客户端选中会话后通过
+  // /api/data/conversation 或 /api/data/draw-conversation 按需加载。
   const resultConversations = conversations.map((conv) => ({
     ...conv,
     messages: [],
   }));
-
-  if (activeId) {
-    const activeConvData = await getRedisJson(redis, `data:${username}:conv:${activeId}`);
-    if (activeConvData && Array.isArray(activeConvData.messages)) {
-      const idx = resultConversations.findIndex((c) => c.id === activeId);
-      if (idx >= 0) {
-        resultConversations[idx] = {
-          ...resultConversations[idx],
-          ...activeConvData,
-          messages: activeConvData.messages,
-        };
-      }
-    }
-  }
-
-  // 只加载活动画图对话的完整消息
   const resultDrawConversations = drawConversations.map((conv) => ({
     ...conv,
     messages: [],
   }));
-
-  if (activeDrawId) {
-    const activeDrawData = await getRedisJson(redis, `data:${username}:draw:${activeDrawId}`);
-    if (activeDrawData && Array.isArray(activeDrawData.messages)) {
-      const idx = resultDrawConversations.findIndex((c) => c.id === activeDrawId);
-      if (idx >= 0) {
-        resultDrawConversations[idx] = {
-          ...resultDrawConversations[idx],
-          ...activeDrawData,
-          messages: activeDrawData.messages,
-        };
-      }
-    }
-  }
 
   return jsonResponse(200, {
     conversations: resultConversations,

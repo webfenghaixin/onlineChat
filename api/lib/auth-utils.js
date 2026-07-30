@@ -151,9 +151,42 @@ export const BALANCE_INITIAL = 5;
 export const COST_CHAT = 0.05;
 export const COST_DRAW = 0.3;
 export const BALANCE_MIN_PRECISION = 0.0001;
+const BALANCE_LOCK_TTL_SECONDS = 10;
+const BALANCE_LOCK_WAIT_MS = 8000;
+const BALANCE_LOCK_RETRY_MS = 40;
+const RELEASE_BALANCE_LOCK_SCRIPT = `
+  if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+  end
+  return 0
+`;
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withBalanceLock(redis, username, action) {
+  const lockKey = `balanceLock:${username}`;
+  const token = crypto.randomUUID();
+  const deadline = Date.now() + BALANCE_LOCK_WAIT_MS;
+
+  while (Date.now() < deadline) {
+    const acquired = await redis.set(lockKey, token, { nx: true, ex: BALANCE_LOCK_TTL_SECONDS });
+    if (acquired) {
+      try {
+        return await action();
+      } finally {
+        await redis.eval(RELEASE_BALANCE_LOCK_SCRIPT, [lockKey], [token]).catch(() => {});
+      }
+    }
+    await wait(BALANCE_LOCK_RETRY_MS);
+  }
+
+  return { ok: false, balance: await getUserBalance(redis, username), reason: '余额更新繁忙' };
 }
 
 export async function getUserBalance(redis, username) {
@@ -179,15 +212,17 @@ export async function chargeUser(redis, username, amount) {
   const cost = round2(amount);
   if (cost <= 0) return { ok: true, balance: await getUserBalance(redis, username), reason: '零扣费' };
 
-  const user = (await getRedisJson(redis, `user:${username}`)) || {};
-  const current = Number.isFinite(Number(user.balance)) ? round2(user.balance) : 0;
-  if (current < cost - BALANCE_MIN_PRECISION) {
-    return { ok: false, balance: current, reason: '余额不足' };
-  }
-  const next = round2(current - cost);
-  user.balance = next;
-  await setRedisJson(redis, `user:${username}`, user);
-  return { ok: true, balance: next, reason: 'ok' };
+  return withBalanceLock(redis, username, async () => {
+    const user = (await getRedisJson(redis, `user:${username}`)) || {};
+    const current = Number.isFinite(Number(user.balance)) ? round2(user.balance) : 0;
+    if (current < cost - BALANCE_MIN_PRECISION) {
+      return { ok: false, balance: current, reason: '余额不足' };
+    }
+    const next = round2(current - cost);
+    user.balance = next;
+    await setRedisJson(redis, `user:${username}`, user);
+    return { ok: true, balance: next, reason: 'ok' };
+  });
 }
 
 /**
@@ -197,10 +232,12 @@ export async function rechargeUser(redis, username, amount) {
   if (!redis || !username) return { ok: false, balance: 0 };
   const add = round2(amount);
   if (add <= 0) return { ok: false, balance: await getUserBalance(redis, username), reason: '充值金额需大于 0' };
-  const user = (await getRedisJson(redis, `user:${username}`)) || {};
-  const current = Number.isFinite(Number(user.balance)) ? round2(user.balance) : 0;
-  const next = round2(current + add);
-  user.balance = next;
-  await setRedisJson(redis, `user:${username}`, user);
-  return { ok: true, balance: next };
+  return withBalanceLock(redis, username, async () => {
+    const user = (await getRedisJson(redis, `user:${username}`)) || {};
+    const current = Number.isFinite(Number(user.balance)) ? round2(user.balance) : 0;
+    const next = round2(current + add);
+    user.balance = next;
+    await setRedisJson(redis, `user:${username}`, user);
+    return { ok: true, balance: next };
+  });
 }

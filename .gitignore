@@ -38,7 +38,8 @@ ehthumbs.db
 
 # AI 工具
 .agents/
-
+.claude
+.trae
 # Android 构建产物
 android/app/build/
 android/.gradle/

@@ -2206,6 +2206,15 @@ button:disabled {
     padding: 14px 22px calc(18px + env(safe-area-inset-bottom));
   }
 
+  .draw-input-row {
+    grid-template-columns: 44px auto minmax(0, 1fr) auto;
+  }
+
+  .draw-input-row .draw-count-quick select {
+    width: 66px;
+    height: 44px;
+  }
+
   .scroll-to-bottom-button {
     right: 28px;
     bottom: calc(30px + var(--keyboard-offset, 0px));

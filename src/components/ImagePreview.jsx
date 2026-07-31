@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import Lightbox from 'yet-another-react-lightbox';
 import Counter from 'yet-another-react-lightbox/plugins/counter';
 import Zoom from 'yet-another-react-lightbox/plugins/zoom';
@@ -5,24 +6,37 @@ import 'yet-another-react-lightbox/styles.css';
 import 'yet-another-react-lightbox/plugins/counter.css';
 
 export default function ImagePreview({ images, index, onClose }) {
-  const list = Array.isArray(images) ? images.filter(Boolean) : [];
-  if (list.length === 0) return null;
+  // 冻结首次挂载时的图片列表：预览期间 images prop 可能因生成任务进行中而流式追加新图，
+  // 若 list 随之变化会导致 slides 引用变化，库内部 dispatch update 重置 globalIndex（切回第一张）
+  const [list] = useState(() => Array.isArray(images) ? images.filter(Boolean) : []);
 
   const initialIndex = Math.min(
     list.length - 1,
     Math.max(0, Number(index) || 0),
   );
 
+  // Lightbox 的 index 为受控状态，需通过 on.view 回调同步，否则滑动后会被拉回初始 index
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+
+  // slides 引用保持稳定，避免库因 slides 引用变化触发 update 重置 index
+  const slides = useMemo(
+    () => list.map((src, slideIndex) => ({
+      src,
+      alt: `预览图片 ${slideIndex + 1}`,
+      imageFit: 'contain',
+    })),
+    [list],
+  );
+
+  if (list.length === 0) return null;
+
   return (
     <Lightbox
       open
       close={onClose}
-      index={initialIndex}
-      slides={list.map((src, slideIndex) => ({
-        src,
-        alt: `预览图片 ${slideIndex + 1}`,
-        imageFit: 'contain',
-      }))}
+      index={currentIndex}
+      on={{ view: ({ index: viewIndex }) => setCurrentIndex(viewIndex) }}
+      slides={slides}
       plugins={[Zoom, Counter]}
       className="image-preview-lightbox"
       carousel={{

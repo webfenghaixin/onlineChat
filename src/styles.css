@@ -5009,6 +5009,10 @@ select {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  /* 恢复长按保存图片的系统菜单（覆盖库默认的 user-select:none / -webkit-touch-callout:none） */
+  -webkit-user-select: auto;
+  user-select: auto;
+  -webkit-touch-callout: default;
 }
 
 @media (max-width: 560px) {

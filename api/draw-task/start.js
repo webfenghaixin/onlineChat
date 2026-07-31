@@ -325,14 +325,20 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       updatedAt: Date.now(),
       completedAt: Date.now(),
     });
-    await upsertDrawTaskRecord(redis, task.owner, task.metadata, {
-      imageUrl: persistentImageUrl,
-      sourceImageUrl,
-      blobUrl,
-      blobUploadError,
-      error: undefined,
-      pending: false,
-    });
+    // 独立 try-catch：conversation 更新失败不覆盖已写入的 succeeded 状态
+    // 多任务并行时 drawDataLock 竞争可能超时，不应让锁失败反向影响 task 状态
+    try {
+      await upsertDrawTaskRecord(redis, task.owner, task.metadata, {
+        imageUrl: persistentImageUrl,
+        sourceImageUrl,
+        blobUrl,
+        blobUploadError,
+        error: undefined,
+        pending: false,
+      });
+    } catch (recordError) {
+      console.error('upsertDrawTaskRecord failed after task succeeded:', recordError);
+    }
     // 图片成功后扣费 0.3 元；扣费失败不阻塞成功状态
     if (persistentImageUrl) {
       try {
@@ -349,11 +355,15 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
         updatedAt: Date.now(),
         completedAt: Date.now(),
       });
+    } catch {}
+    try {
       await upsertDrawTaskRecord(redis, task.owner, task.metadata, {
         error: errorMessage,
         pending: false,
       });
-    } catch {}
+    } catch (recordError) {
+      console.error('upsertDrawTaskRecord failed after task failed:', recordError);
+    }
   } finally {
     if (lockKey && lockAcquired) {
       await redis.del(lockKey).catch(() => {});

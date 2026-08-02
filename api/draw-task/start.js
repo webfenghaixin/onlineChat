@@ -24,20 +24,22 @@ const RELEASE_DRAW_DATA_LOCK_SCRIPT = `
   return 0
 `;
 
-function setCorsHeaders(res) {
+export { TASK_TTL_SECONDS, CORS_HEADERS };
+
+export function setCorsHeaders(res) {
   for (const [key, value] of Object.entries(CORS_HEADERS)) {
     res.setHeader(key, value);
   }
 }
 
-function sendJson(res, statusCode, body) {
+export function sendJson(res, statusCode, body) {
   setCorsHeaders(res);
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(body));
 }
 
-function readJsonBody(req) {
+export function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     req.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
@@ -53,7 +55,7 @@ function readJsonBody(req) {
   });
 }
 
-async function authenticateNodeRequest(req) {
+export async function authenticateNodeRequest(req) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
   if (!token) return { error: { status: 401, message: '未登录，请重新登录' } };
@@ -67,7 +69,7 @@ async function authenticateNodeRequest(req) {
   return { username: payload.username };
 }
 
-async function setTask(redis, key, task) {
+export async function setTask(redis, key, task) {
   await redis.set(key, JSON.stringify(task), { ex: TASK_TTL_SECONDS });
 }
 
@@ -103,7 +105,7 @@ function resolveTaskLockKey(task) {
   return `drawTaskLock:${task.owner}:${task.id}`;
 }
 
-function normalizeTaskMetadata(metadata, taskId) {
+export function normalizeTaskMetadata(metadata, taskId) {
   if (!metadata || typeof metadata !== 'object') return null;
   const conversationId = String(metadata.conversationId || '');
   const userMessage = metadata.userMessage;
@@ -127,11 +129,60 @@ function normalizeTaskMetadata(metadata, taskId) {
   };
 }
 
-async function upsertDrawTaskRecord(redis, username, metadata, patch = {}) {
+export async function upsertDrawTaskRecord(redis, username, metadata, patch = {}) {
   if (!metadata) return;
   return withDrawDataLock(redis, username, () => (
     upsertDrawTaskRecordUnlocked(redis, username, metadata, patch)
   ));
+}
+
+// 批量写入：一次性写入 userMessage + N个 assistantMessages，只获取1次锁，避免多任务并行时的锁竞争
+export async function upsertBatchDrawTaskRecord(redis, username, baseMetadata, assistantMessages) {
+  if (!baseMetadata || !Array.isArray(assistantMessages) || assistantMessages.length === 0) return;
+  return withDrawDataLock(redis, username, () => {
+    const conversationKey = `data:${username}:draw:${baseMetadata.conversationId}`;
+    return (async () => {
+      const existingConversation = await getRedisJson(redis, conversationKey);
+      const conversation = {
+        id: baseMetadata.conversationId,
+        title: baseMetadata.conversationTitle || existingConversation?.title || 'New drawing',
+        updatedAt: Date.now(),
+        messages: Array.isArray(existingConversation?.messages)
+          ? [...existingConversation.messages]
+          : [],
+      };
+
+      if (!conversation.messages.some((message) => message.id === baseMetadata.userMessage.id)) {
+        conversation.messages.push(baseMetadata.userMessage);
+      }
+
+      for (const assistantMessage of assistantMessages) {
+        if (!conversation.messages.some((message) => message.id === assistantMessage.id)) {
+          conversation.messages.push({ ...assistantMessage, pending: true });
+        }
+      }
+
+      conversation.updatedAt = Date.now();
+      await setRedisJson(redis, conversationKey, conversation);
+
+      const metaKey = `data:${username}:meta`;
+      const meta = (await getRedisJson(redis, metaKey)) || {};
+      const existingSummaries = Array.isArray(meta.drawConversations) ? meta.drawConversations : [];
+      const summary = {
+        id: conversation.id,
+        title: conversation.title,
+        updatedAt: conversation.updatedAt,
+        messageCount: conversation.messages.length,
+        imageCount: conversation.messages.filter((message) => message.role === 'assistant' && message.imageUrl).length,
+      };
+      await setRedisJson(redis, metaKey, {
+        ...meta,
+        drawConversations: [summary, ...existingSummaries.filter((item) => item.id !== conversation.id)],
+        activeDrawConversationId: meta.activeDrawConversationId || baseMetadata.activeDrawConversationId,
+        updatedAt: Date.now(),
+      });
+    })();
+  });
 }
 
 async function upsertDrawTaskRecordUnlocked(redis, username, metadata, patch = {}) {

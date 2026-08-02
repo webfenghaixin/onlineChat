@@ -1,5 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, lazy } from 'react';
-import { streamChatCompletion, generateImage, pollDrawTask } from './lib/stream';
+import { streamChatCompletion, generateImageBatch, pollDrawTask } from './lib/stream';
 import { register, login, saveToCloud, loadFromCloud, getToken, clearToken, getStoredUsername, fetchBalance, rechargeBalance, fetchConversation, fetchDrawConversation } from './lib/auth';
 import {
   DRAW_MAX_IMAGES,
@@ -1130,104 +1130,72 @@ export default function App() {
     setDrawPendingImages([]);
 
     const activeConv = drawConversations.find((c) => c.id === targetConvId);
+    const batchController = new AbortController();
+    const taskIdToMessageId = new Map();
     let startedTaskCount = 0;
-    let settledLaunchCount = 0;
 
-    const runDrawTask = async (assistantMessage) => {
-      const controller = new AbortController();
-      drawTaskControllersRef.current.set(assistantMessage.id, controller);
-      let currentTaskId = '';
-      let launchSettled = false;
-      const settleLaunch = () => {
-        if (launchSettled) return;
-        launchSettled = true;
-        settledLaunchCount += 1;
-        if (settledLaunchCount >= requestedCount) releaseSubmission();
-      };
-
-      try {
-        await generateImage({
-          settings,
-          prompt,
-          referenceImages,
-          size,
-          quality,
-          signal: controller.signal,
-          taskMetadata: {
-            conversationId: targetConvId,
-            conversationTitle: activeConv?.id === targetConvId ? activeConv.title : prompt.slice(0, 18),
-            activeDrawConversationId: targetConvId,
-            userMessage: referenceImages.length > 0
-              ? { ...userMessage, referenceImage: undefined, referenceImages: undefined }
-              : userMessage,
-            assistantMessage,
-          },
-          onTaskStart: (taskId) => {
-            currentTaskId = taskId;
-            startedTaskCount += 1;
-            settleLaunch();
-            activeDrawTaskIdsRef.current.add(taskId);
-            updateDrawConversation(targetConvId, (conv) => ({
-              ...conv,
-              messages: (conv.messages || []).map((message) =>
-                message.id === assistantMessage.id ? { ...message, taskId, pending: true } : message,
-              ),
-            }));
-            setStatusText(`已提交 ${startedTaskCount}/${requestedCount} 个图片任务`);
-          },
-          onImage: (imageUrl, taskTiming) => {
-            const durationSeconds = resolveDrawDurationSeconds(taskTiming, now);
-            updateDrawConversation(targetConvId, (conv) => ({
-              ...conv,
-              messages: (conv.messages || []).map((message) =>
-                message.id === assistantMessage.id
-                  ? { ...message, imageUrl, durationSeconds, error: undefined, pending: false }
-                  : message,
-              ),
-            }));
-            enforceDrawLimit();
-          },
-        });
-        return { ok: true };
-      } catch (error) {
-        if (error.name !== 'AbortError') {
-          const nextErrorText = error.message || '图片生成失败，请重试。';
+    try {
+      const results = await generateImageBatch({
+        settings,
+        prompt,
+        referenceImages,
+        size,
+        quality,
+        count: requestedCount,
+        signal: batchController.signal,
+        taskMetadata: {
+          conversationId: targetConvId,
+          conversationTitle: activeConv?.id === targetConvId ? activeConv.title : prompt.slice(0, 18),
+          activeDrawConversationId: targetConvId,
+          userMessage: referenceImages.length > 0
+            ? { ...userMessage, referenceImage: undefined, referenceImages: undefined }
+            : userMessage,
+          assistantMessages,
+        },
+        onTaskStart: (taskId, messageId) => {
+          startedTaskCount += 1;
+          taskIdToMessageId.set(taskId, messageId);
+          activeDrawTaskIdsRef.current.add(taskId);
+          drawTaskControllersRef.current.set(messageId, batchController);
           updateDrawConversation(targetConvId, (conv) => ({
             ...conv,
             messages: (conv.messages || []).map((message) =>
-              message.id === assistantMessage.id
-                ? { ...message, error: nextErrorText, pending: false }
+              message.id === messageId ? { ...message, taskId, pending: true } : message,
+            ),
+          }));
+          setStatusText(`已提交 ${startedTaskCount}/${requestedCount} 个图片任务`);
+        },
+        onImage: (imageUrl, taskTiming, taskId) => {
+          const messageId = taskIdToMessageId.get(taskId);
+          if (!messageId) return;
+          const durationSeconds = resolveDrawDurationSeconds(taskTiming, now);
+          updateDrawConversation(targetConvId, (conv) => ({
+            ...conv,
+            messages: (conv.messages || []).map((message) =>
+              message.id === messageId
+                ? { ...message, imageUrl, durationSeconds, error: undefined, pending: false }
                 : message,
             ),
           }));
-          if (error.code === 'INSUFFICIENT_BALANCE' || error.status === 402) {
-            setRechargeDialogOpen(true);
-          }
-          return { ok: false, error: nextErrorText };
-        }
+          enforceDrawLimit();
+        },
+      });
 
-        updateDrawConversation(targetConvId, (conv) => {
-          const remaining = (conv.messages || []).filter((message) => message.id !== assistantMessage.id);
-          const hasBatchResult = remaining.some((message) => message.role === 'assistant' && message.batchId === batchId);
-          return {
-            ...conv,
-            messages: hasBatchResult ? remaining : remaining.filter((message) => message.id !== userMessage.id),
-          };
-        });
-        return { ok: false, aborted: true };
-      } finally {
-        settleLaunch();
-        if (drawTaskControllersRef.current.get(assistantMessage.id) === controller) {
-          drawTaskControllersRef.current.delete(assistantMessage.id);
-        }
-        if (currentTaskId) activeDrawTaskIdsRef.current.delete(currentTaskId);
-      }
-    };
-
-    try {
-      const results = await Promise.all(assistantMessages.map((message) => runDrawTask(message)));
+      // results 是 generateImageBatch 返回的数组，每项 { messageId, ok, error? }
       const successCount = results.filter((result) => result.ok).length;
-      const failedResults = results.filter((result) => !result.ok && !result.aborted);
+      const failedResults = results.filter((result) => !result.ok);
+
+      // 标记失败任务为 error
+      for (const result of failedResults) {
+        updateDrawConversation(targetConvId, (conv) => ({
+          ...conv,
+          messages: (conv.messages || []).map((message) =>
+            message.id === result.messageId
+              ? { ...message, error: result.error, pending: false }
+              : message,
+          ),
+        }));
+      }
 
       if (successCount === requestedCount) {
         setStatusText(`${requestedCount} 张图片生成完成`);
@@ -1237,12 +1205,50 @@ export default function App() {
       } else if (failedResults.length > 0) {
         setStatusText('图片生成失败');
         setErrorText(failedResults[0].error);
-      } else {
+      }
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        // 取消时移除未完成的 assistantMessage（无 imageUrl、无 error 的）
+        updateDrawConversation(targetConvId, (conv) => {
+          const remaining = (conv.messages || []).filter((message) =>
+            !(message.batchId === batchId && message.role === 'assistant' && !message.imageUrl && !message.error)
+          );
+          const hasBatchResult = remaining.some((message) => message.role === 'assistant' && message.batchId === batchId);
+          return {
+            ...conv,
+            messages: hasBatchResult ? remaining : remaining.filter((message) => message.id !== userMessage.id),
+          };
+        });
         setStatusText('图片生成已停止');
+      } else {
+        const nextErrorText = error.message || '图片生成失败，请重试。';
+        // 批量接口整体失败：标记所有未完成的 assistantMessage 为 error
+        updateDrawConversation(targetConvId, (conv) => ({
+          ...conv,
+          messages: (conv.messages || []).map((message) =>
+            message.batchId === batchId && message.role === 'assistant' && !message.imageUrl
+              ? { ...message, error: nextErrorText, pending: false }
+              : message,
+          ),
+        }));
+        if (error.code === 'INSUFFICIENT_BALANCE' || error.status === 402) {
+          setRechargeDialogOpen(true);
+        }
+        setStatusText('图片生成失败');
+        setErrorText(nextErrorText);
       }
     } finally {
       releaseSubmission();
       refreshBalance();
+      // 只清理本批次设置的 controllers 和 activeTaskIds，不影响恢复轮询的任务
+      for (const messageId of taskIdToMessageId.values()) {
+        if (drawTaskControllersRef.current.get(messageId) === batchController) {
+          drawTaskControllersRef.current.delete(messageId);
+        }
+      }
+      for (const taskId of taskIdToMessageId.keys()) {
+        activeDrawTaskIdsRef.current.delete(taskId);
+      }
     }
   }
 

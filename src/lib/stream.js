@@ -782,7 +782,7 @@ export async function pollDrawTask({ settings, taskId, startedAt, signal, onImag
         onImage(statusData.imageUrl, {
           createdAt: statusData.createdAt,
           completedAt: statusData.completedAt,
-        });
+        }, taskId);
         return;
       }
 
@@ -989,4 +989,79 @@ export async function generateImage({
   }
 
   return generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage });
+}
+
+// 批量制图：前端一次请求创建N个任务，后端异步执行，前端并行轮询
+export async function generateImageBatch({
+  settings,
+  prompt,
+  referenceImages,
+  size,
+  quality,
+  count,
+  signal,
+  onImage,
+  onTaskStart,
+  taskMetadata,
+}) {
+  const startedAt = Date.now();
+  const response = await fetch(resolveDrawTaskUrl(settings, 'batch'), {
+    method: 'POST',
+    headers: getAuthorizedHeaders(),
+    body: JSON.stringify({
+      apiMode: settings.drawApiMode || 'images',
+      source: settings.source || 'rightcode',
+      prompt,
+      referenceImages: Array.isArray(referenceImages) ? referenceImages : [],
+      size: size || '1024x1024',
+      quality: quality || 'medium',
+      model: settings.drawModel || 'gpt-image-2',
+      count,
+      taskMetadata,
+    }),
+    signal,
+  });
+
+  const data = await readJsonResponse(response);
+  if (!response.ok) {
+    const err = new Error(
+      normalizeDrawErrorMessage(
+        data.error || `批量创建绘图任务失败 (${response.status})`,
+        response.status,
+      ),
+    );
+    err.status = response.status;
+    err.code = data.code;
+    throw err;
+  }
+
+  const tasks = Array.isArray(data.tasks) ? data.tasks : [];
+  if (tasks.length === 0) {
+    throw new Error('创建绘图任务失败：服务端没有返回任务 ID。');
+  }
+
+  // 通知前端每个 message 对应的 taskId
+  for (const { messageId, taskId } of tasks) {
+    onTaskStart?.(taskId, messageId);
+  }
+
+  // 并行轮询所有任务（轮询是轻量 GET，无锁竞争）
+  // 用 allSettled：单个任务失败不中断其他轮询，由调用方根据结果处理
+  const results = await Promise.allSettled(
+    tasks.map(({ messageId, taskId }) =>
+      pollDrawTask({ settings, taskId, startedAt, signal, onImage })
+        .then(() => ({ messageId, ok: true }))
+        .catch((error) => {
+          if (error?.name === 'AbortError') throw error;
+          return { messageId, ok: false, error: error.message || '图片生成失败，请重试。' };
+        })
+    )
+  );
+
+  // AbortError 仍需抛出
+  for (const result of results) {
+    if (result.status === 'rejected') throw result.reason;
+  }
+
+  return results.map((result) => result.value);
 }

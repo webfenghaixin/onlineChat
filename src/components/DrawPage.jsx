@@ -107,11 +107,15 @@ export default function DrawPage({
   const [copiedId, setCopiedId] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [composerCollapsed, setComposerCollapsed] = useState(false);
+  const [composerFabVisible, setComposerFabVisible] = useState(false);
   const [drawDrawerTab, setDrawDrawerTab] = useState('history');
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const messageListRef = useRef(null);
   const programmaticScrollRef = useRef(false);
   const atBottomRef = useRef(true);
+  const userExpandedRef = useRef(false);
+  const keyboardVisibleRef = useRef(false);
+  const collapseDebounceRef = useRef(0);
   const drawImageProcessingRef = useRef(false);
 
   const removeDrawPendingImage = useCallback((index) => {
@@ -198,20 +202,58 @@ export default function DrawPage({
   }, []);
 
   // 带滞后阈值的滚动状态更新，避免边界反复横跳导致输入框闪烁
-  // 进入底部需 distance < 40px（严格），离开底部需 distance > 120px（宽松）
+  // 进入底部需 distance < 40px（严格），离开底部需 distance > 半个屏幕（宽松）
+  // 用户手动展开后锁定，直到滚回底部才恢复自动逻辑
+  // 键盘弹出时禁止自动收起，状态切换后 300ms 防抖避开键盘收起动画抖动
   const updateScrollState = useCallback(() => {
     const el = messageListRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const leaveThreshold = el.clientHeight * 0.5;
+
+    if (userExpandedRef.current) {
+      if (distance < 40) {
+        userExpandedRef.current = false;
+        atBottomRef.current = true;
+        setComposerCollapsed(false);
+      }
+      setShowScrollToBottom(distance >= 40);
+      return;
+    }
+
     let atBottom = atBottomRef.current;
-    if (atBottom && distance > 120) {
+    if (atBottom && distance > leaveThreshold) {
       atBottom = false;
     } else if (!atBottom && distance < 40) {
       atBottom = true;
     }
+
+    // 键盘弹出时不自动收起输入框
+    if (!atBottom && keyboardVisibleRef.current) {
+      setShowScrollToBottom(distance >= 40);
+      return;
+    }
+
+    // 状态切换后 300ms 内忽略 scroll 事件
+    const now = Date.now();
+    if (now - collapseDebounceRef.current < 300) {
+      setShowScrollToBottom(distance >= 40);
+      return;
+    }
+
+    const prevAtBottom = atBottomRef.current;
     atBottomRef.current = atBottom;
+    if (prevAtBottom !== atBottom) {
+      collapseDebounceRef.current = now;
+    }
     setShowScrollToBottom(!atBottom);
     setComposerCollapsed(!atBottom);
+  }, []);
+
+  // 用户点击 FAB 手动展开输入框，锁定状态防止布局变化触发的 scroll 再次收起
+  const expandComposer = useCallback(() => {
+    userExpandedRef.current = true;
+    setComposerCollapsed(false);
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -220,11 +262,42 @@ export default function DrawPage({
     programmaticScrollRef.current = true;
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     atBottomRef.current = true;
+    userExpandedRef.current = false;
     setShowScrollToBottom(false);
     setComposerCollapsed(false);
     window.setTimeout(() => {
       programmaticScrollRef.current = false;
     }, 500);
+  }, []);
+
+  // FAB 可见性同步：收起时延迟显示（等 Composer 缩小动画），展开时立即隐藏
+  useEffect(() => {
+    if (composerCollapsed) {
+      const timer = setTimeout(() => setComposerFabVisible(true), 180);
+      return () => clearTimeout(timer);
+    }
+    setComposerFabVisible(false);
+    return undefined;
+  }, [composerCollapsed]);
+
+  // 监听键盘弹出状态（通过全局 --keyboard-offset CSS 变量同步）
+  useEffect(() => {
+    const checkKeyboard = () => {
+      const offset = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-offset') || '0');
+      keyboardVisibleRef.current = offset > 0;
+    };
+    checkKeyboard();
+    const vv = window.visualViewport;
+    vv?.addEventListener('resize', checkKeyboard);
+    vv?.addEventListener('scroll', checkKeyboard);
+    window.addEventListener('focusin', checkKeyboard);
+    window.addEventListener('focusout', checkKeyboard);
+    return () => {
+      vv?.removeEventListener('resize', checkKeyboard);
+      vv?.removeEventListener('scroll', checkKeyboard);
+      window.removeEventListener('focusin', checkKeyboard);
+      window.removeEventListener('focusout', checkKeyboard);
+    };
   }, []);
 
   useEffect(() => {
@@ -741,8 +814,8 @@ export default function DrawPage({
           {composerCollapsed && !drawSelectMode && (
             <button
               type="button"
-              className="composer-fab"
-              onClick={() => setComposerCollapsed(false)}
+              className={`composer-fab${composerFabVisible ? ' composer-fab-visible' : ''}`}
+              onClick={expandComposer}
               aria-label="展开输入框"
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -753,8 +826,9 @@ export default function DrawPage({
           )}
         </div>
 
-        {!(composerCollapsed && !drawSelectMode) && (
-          <footer className="composer-panel">
+        <footer
+          className={`composer-panel composer-transition-wrap${composerCollapsed && !drawSelectMode ? ' composer-collapsed' : ''}`}
+        >
             {drawSelectMode ? (
               <div className="select-action-bar">
                 <Button className="select-action-btn select-action-btn-user" type="default" size="small" onClick={selectAllDrawUserMessages}>
@@ -956,7 +1030,6 @@ export default function DrawPage({
             onChange={handleDrawFileChange}
           />
         </footer>
-        )}
       </main>
 
       <ConfirmDialog

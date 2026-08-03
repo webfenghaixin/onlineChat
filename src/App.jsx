@@ -125,6 +125,7 @@ export default function App() {
   const [visibleMessageCount, setVisibleMessageCount] = useState(50);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [composerCollapsed, setComposerCollapsed] = useState(false);
+  const [composerFabVisible, setComposerFabVisible] = useState(false);
   const [showCompleteHint, setShowCompleteHint] = useState(false);
   const [authState, setAuthState] = useState(() => (getToken() ? 'loading' : 'auth-form'));
   const [authLoadingActive, setAuthLoadingActive] = useState(true);
@@ -169,6 +170,9 @@ export default function App() {
   const cloudSaveTimerRef = useRef(null);
   const programmaticScrollRef = useRef(false);
   const atBottomRef = useRef(true);
+  const userExpandedRef = useRef(false);
+  const keyboardVisibleRef = useRef(false);
+  const collapseDebounceRef = useRef(0);
   const cloudSavingRef = useRef(null);
   const cloudLoadingRef = useRef(false);
   const cloudSessionRef = useRef(0);
@@ -658,21 +662,59 @@ export default function App() {
   }, []);
 
   // 带滞后阈值的滚动状态更新，避免边界反复横跳导致输入框闪烁
-  // 进入底部需 distance < 40px（严格），离开底部需 distance > 120px（宽松）
-  // 40~120px 之间为死区，状态保持不变
+  // 进入底部需 distance < 40px（严格），离开底部需 distance > 半个屏幕（宽松）
+  // 用户手动展开后锁定，直到滚回底部才恢复自动逻辑
+  // 键盘弹出时禁止自动收起（用户正在输入时滚动通常是为查看历史）
+  // 状态切换后 300ms 防抖，避开键盘收起动画期间的抖动
   const updateScrollState = useCallback(() => {
     const el = messageListRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const leaveThreshold = el.clientHeight * 0.5;
+
+    if (userExpandedRef.current) {
+      if (distance < 40) {
+        userExpandedRef.current = false;
+        atBottomRef.current = true;
+        setComposerCollapsed(false);
+      }
+      setShowScrollToBottom(distance >= 40);
+      return;
+    }
+
     let atBottom = atBottomRef.current;
-    if (atBottom && distance > 120) {
+    if (atBottom && distance > leaveThreshold) {
       atBottom = false;
     } else if (!atBottom && distance < 40) {
       atBottom = true;
     }
+
+    // 键盘弹出时不自动收起输入框，避免键盘收起动画引发 scroll 抖动
+    if (!atBottom && keyboardVisibleRef.current) {
+      setShowScrollToBottom(distance >= 40);
+      return;
+    }
+
+    // 状态切换后 300ms 内忽略 scroll 事件，防止键盘收起动画连锁抖动
+    const now = Date.now();
+    if (now - collapseDebounceRef.current < 300) {
+      setShowScrollToBottom(distance >= 40);
+      return;
+    }
+
+    const prevAtBottom = atBottomRef.current;
     atBottomRef.current = atBottom;
+    if (prevAtBottom !== atBottom) {
+      collapseDebounceRef.current = now;
+    }
     setShowScrollToBottom(!atBottom);
     setComposerCollapsed(!atBottom);
+  }, []);
+
+  // 用户点击 FAB 手动展开输入框，锁定状态防止布局变化触发的 scroll 再次收起
+  const expandComposer = useCallback(() => {
+    userExpandedRef.current = true;
+    setComposerCollapsed(false);
   }, []);
 
   // 滚动到底部（用户点击按钮时调用）
@@ -682,6 +724,7 @@ export default function App() {
       programmaticScrollRef.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       atBottomRef.current = true;
+      userExpandedRef.current = false;
       setShowScrollToBottom(false);
       setComposerCollapsed(false);
       setTimeout(() => { programmaticScrollRef.current = false; }, 500);
@@ -695,11 +738,22 @@ export default function App() {
       programmaticScrollRef.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       atBottomRef.current = true;
+      userExpandedRef.current = false;
       setShowScrollToBottom(false);
       setComposerCollapsed(false);
       setTimeout(() => { programmaticScrollRef.current = false; }, 500);
     }
   }, []);
+
+  // FAB 可见性同步：收起时延迟显示（等 Composer 缩小动画），展开时立即隐藏
+  useEffect(() => {
+    if (composerCollapsed) {
+      const timer = setTimeout(() => setComposerFabVisible(true), 180);
+      return () => clearTimeout(timer);
+    }
+    setComposerFabVisible(false);
+    return undefined;
+  }, [composerCollapsed]);
 
   // 监听用户滚动：向上滚收起输入框，到底部展开
   useEffect(() => {
@@ -761,14 +815,17 @@ export default function App() {
     function applyKeyboardOffset() {
       if (!vv) {
         document.documentElement.style.setProperty('--keyboard-offset', '0px');
+        keyboardVisibleRef.current = false;
         return;
       }
 
       const keyboardOffset = Math.max(0, stableHeight - vv.height - vv.offsetTop);
+      const visible = keyboardOffset > 80;
       document.documentElement.style.setProperty(
         '--keyboard-offset',
-        `${Math.round(keyboardOffset > 80 ? keyboardOffset : 0)}px`,
+        `${Math.round(visible ? keyboardOffset : 0)}px`,
       );
+      keyboardVisibleRef.current = visible;
     }
 
     function onViewportChange() {
@@ -1984,8 +2041,8 @@ export default function App() {
           {composerCollapsed && !selectMode && (
             <button
               type="button"
-              className="composer-fab"
-              onClick={() => setComposerCollapsed(false)}
+              className={`composer-fab${composerFabVisible ? ' composer-fab-visible' : ''}`}
+              onClick={expandComposer}
               aria-label="展开输入框"
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1996,33 +2053,35 @@ export default function App() {
           )}
         </div>
 
-        {!(composerCollapsed && !selectMode) && (
-          <Composer
-            draft={draft}
-            setDraft={setDraft}
-            isSending={isSending}
-            canSend={canSend}
-            sendMessage={sendMessage}
-            stopStreaming={stopStreaming}
-            handleComposerKeyDown={handleComposerKeyDown}
-            selectMode={selectMode}
-            selectedMessageIds={selectedMessageIds}
-            exitSelectMode={exitSelectMode}
-            selectAllUserMessages={selectAllUserMessages}
-            selectAllAssistantMessages={selectAllAssistantMessages}
-            deleteSelectedMessages={deleteSelectedMessages}
-            showCompleteHint={showCompleteHint}
-            errorText={errorText}
-            pendingImages={pendingImages}
-            removePendingImage={removePendingImage}
-            clearPendingImages={clearPendingImages}
-            handleUploadClick={handleUploadClick}
-            imageProcessing={imageProcessing}
-            composerRef={composerRef}
-            fileInputRef={fileInputRef}
-            handleFileChange={handleFileChange}
-            handleComposerPaste={handleComposerPaste}
-          />
+        {!selectMode && (
+          <div className={`composer-transition-wrap${composerCollapsed ? ' composer-collapsed' : ''}`}>
+            <Composer
+              draft={draft}
+              setDraft={setDraft}
+              isSending={isSending}
+              canSend={canSend}
+              sendMessage={sendMessage}
+              stopStreaming={stopStreaming}
+              handleComposerKeyDown={handleComposerKeyDown}
+              selectMode={selectMode}
+              selectedMessageIds={selectedMessageIds}
+              exitSelectMode={exitSelectMode}
+              selectAllUserMessages={selectAllUserMessages}
+              selectAllAssistantMessages={selectAllAssistantMessages}
+              deleteSelectedMessages={deleteSelectedMessages}
+              showCompleteHint={showCompleteHint}
+              errorText={errorText}
+              pendingImages={pendingImages}
+              removePendingImage={removePendingImage}
+              clearPendingImages={clearPendingImages}
+              handleUploadClick={handleUploadClick}
+              imageProcessing={imageProcessing}
+              composerRef={composerRef}
+              fileInputRef={fileInputRef}
+              handleFileChange={handleFileChange}
+              handleComposerPaste={handleComposerPaste}
+            />
+          </div>
         )}
       </main>
 

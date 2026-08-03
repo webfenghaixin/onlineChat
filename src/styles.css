@@ -973,11 +973,31 @@ button:disabled {
   z-index: 8;
 }
 
+/* 输入框收起/展开过渡动效包裹层 */
+.composer-transition-wrap {
+  transform-origin: bottom center;
+  transition:
+    transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+    max-height 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+/* 收起态：缩放到 FAB 大小并淡出 */
+.composer-transition-wrap.composer-collapsed {
+  transform: scale(0.18);
+  opacity: 0;
+  max-height: 0;
+  pointer-events: none;
+  border-top: none;
+  box-shadow: none;
+}
+
 .composer-fab {
   position: absolute;
   left: 50%;
   bottom: 16px;
-  transform: translateX(-50%);
+  transform: translateX(-50%) scale(0.6);
   z-index: 6;
   display: flex;
   align-items: center;
@@ -990,15 +1010,25 @@ button:disabled {
   color: #fff;
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(84, 201, 191, 0.35);
-  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s ease;
+  opacity: 0;
+  transition:
+    opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.18s ease;
 }
 
-.composer-fab:hover {
+/* FAB 可见态：从缩小态放大到正常 */
+.composer-fab.composer-fab-visible {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+}
+
+.composer-fab.composer-fab-visible:hover {
   transform: translateX(-50%) scale(1.06);
   box-shadow: 0 6px 20px rgba(84, 201, 191, 0.45);
 }
 
-.composer-fab:active {
+.composer-fab.composer-fab-visible:active {
   transform: translateX(-50%) scale(0.96);
 }
 

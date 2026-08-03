@@ -483,7 +483,7 @@ button:disabled {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 18px 14px 28px;
+  padding: 18px 14px calc(var(--composer-height, 80px) + 10px);
   scroll-behavior: smooth;
 }
 
@@ -963,7 +963,7 @@ button:disabled {
   display: grid;
   gap: 8px;
   flex-shrink: 0;
-  padding: 10px 14px calc(12px + env(safe-area-inset-bottom));
+  padding: 10px 14px calc(12px + max(20px, env(safe-area-inset-bottom)));
   background:
     linear-gradient(180deg, rgba(255,255,251,0.98) 0%, rgba(252,250,245,0.96) 100%);
   border-top: 1px solid var(--line);
@@ -973,8 +973,13 @@ button:disabled {
   z-index: 8;
 }
 
-/* 输入框收起/展开过渡动效包裹层 */
-.composer-transition-wrap {
+/* 输入框收起/展开过渡动效包裹层（脱离文档流，浮于底部，消息列表用 padding-bottom 预留空间） */
+.phone-shell > .composer-transition-wrap {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 8;
   transform-origin: bottom center;
   transition:
     transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
@@ -3058,7 +3063,7 @@ select {
 }
 
 .message-list {
-  padding: 24px 20px 32px;
+  padding: 24px 20px calc(var(--composer-height, 80px) + 10px);
   background:
     linear-gradient(180deg, rgba(255, 255, 252, 0.38) 0%, rgba(255, 255, 252, 0.12) 100%),
     url('/chat-bg.jpg') center / cover no-repeat,
@@ -4411,6 +4416,44 @@ select {
 }
 
 .composer-fullscreen-button:focus-visible {
+  outline: 3px solid rgba(255, 204, 0, 0.36);
+  outline-offset: 2px;
+}
+
+/* 收起输入框按钮（与全屏按钮同风格，位于全屏按钮左侧） */
+.composer-collapse-button {
+  position: absolute;
+  top: 2px;
+  right: 44px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid rgba(114, 182, 165, 0.46);
+  border-radius: 999px;
+  background: rgba(229, 247, 241, 0.9);
+  color: #4f6f67;
+  cursor: pointer;
+  transition: transform 0.16s ease, background 0.16s ease;
+}
+
+.composer-collapse-button:hover {
+  background: rgba(216, 245, 240, 1);
+  transform: translateY(-1px);
+}
+
+.composer-collapse-button:active {
+  transform: scale(0.96);
+}
+
+.composer-collapse-button svg {
+  display: block;
+}
+
+.composer-collapse-button:focus-visible {
   outline: 3px solid rgba(255, 204, 0, 0.36);
   outline-offset: 2px;
 }

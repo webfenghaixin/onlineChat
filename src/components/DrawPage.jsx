@@ -114,9 +114,11 @@ export default function DrawPage({
   const programmaticScrollRef = useRef(false);
   const atBottomRef = useRef(true);
   const userExpandedRef = useRef(false);
+  const userCollapsedRef = useRef(false);
   const keyboardVisibleRef = useRef(false);
   const collapseDebounceRef = useRef(0);
   const drawImageProcessingRef = useRef(false);
+  const composerPanelRef = useRef(null);
 
   const removeDrawPendingImage = useCallback((index) => {
     setDrawPendingImages((prev) => (prev || []).filter((_, itemIndex) => itemIndex !== index));
@@ -221,6 +223,17 @@ export default function DrawPage({
       return;
     }
 
+    // 用户手动收起后，滚回底部时自动展开
+    if (userCollapsedRef.current) {
+      if (distance < 40) {
+        userCollapsedRef.current = false;
+        atBottomRef.current = true;
+        setComposerCollapsed(false);
+      }
+      setShowScrollToBottom(distance >= 40);
+      return;
+    }
+
     let atBottom = atBottomRef.current;
     if (atBottom && distance > leaveThreshold) {
       atBottom = false;
@@ -253,7 +266,16 @@ export default function DrawPage({
   // 用户点击 FAB 手动展开输入框，锁定状态防止布局变化触发的 scroll 再次收起
   const expandComposer = useCallback(() => {
     userExpandedRef.current = true;
+    userCollapsedRef.current = false;
     setComposerCollapsed(false);
+  }, []);
+
+  // 用户点击收起按钮，锁定收起状态，滚回底部时自动展开
+  const collapseComposer = useCallback(() => {
+    userCollapsedRef.current = true;
+    userExpandedRef.current = false;
+    atBottomRef.current = false;
+    setComposerCollapsed(true);
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -279,6 +301,30 @@ export default function DrawPage({
     setComposerFabVisible(false);
     return undefined;
   }, [composerCollapsed]);
+
+  // 动态监听输入框高度，设置 CSS 变量 --composer-height 供消息列表 padding 使用
+  // 输入框已脱离文档流（absolute），消息列表靠 padding-bottom 预留空间
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (!list) return undefined;
+    if (drawSelectMode) {
+      list.style.setProperty('--composer-height', '0px');
+      return undefined;
+    }
+    const panel = composerPanelRef.current;
+    if (!panel) {
+      list.style.setProperty('--composer-height', composerCollapsed ? '68px' : '80px');
+      return undefined;
+    }
+    const apply = () => {
+      const h = composerCollapsed ? 68 : panel.offsetHeight;
+      list.style.setProperty('--composer-height', `${h}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(panel);
+    return () => ro.disconnect();
+  }, [composerCollapsed, drawSelectMode]);
 
   // 监听键盘弹出状态（通过全局 --keyboard-offset CSS 变量同步）
   useEffect(() => {
@@ -827,6 +873,7 @@ export default function DrawPage({
         </div>
 
         <footer
+          ref={composerPanelRef}
           className={`composer-panel composer-transition-wrap${composerCollapsed && !drawSelectMode ? ' composer-collapsed' : ''}`}
         >
             {drawSelectMode ? (
@@ -966,6 +1013,18 @@ export default function DrawPage({
                   title="全屏编辑提示词"
                 >
                   <FullscreenIcon />
+                </button>
+                <button
+                  type="button"
+                  className="composer-collapse-button"
+                  onClick={collapseComposer}
+                  aria-label="收起输入框"
+                  title="收起输入框"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="6" width="20" height="12" rx="2" />
+                    <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
+                  </svg>
                 </button>
                 <Button
                   className="upload-button"

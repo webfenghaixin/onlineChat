@@ -111,6 +111,7 @@ export default function DrawPage({
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const messageListRef = useRef(null);
   const programmaticScrollRef = useRef(false);
+  const atBottomRef = useRef(true);
   const drawImageProcessingRef = useRef(false);
 
   const removeDrawPendingImage = useCallback((index) => {
@@ -196,41 +197,54 @@ export default function DrawPage({
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }, []);
 
+  // 带滞后阈值的滚动状态更新，避免边界反复横跳导致输入框闪烁
+  // 进入底部需 distance < 40px（严格），离开底部需 distance > 120px（宽松）
+  const updateScrollState = useCallback(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    let atBottom = atBottomRef.current;
+    if (atBottom && distance > 120) {
+      atBottom = false;
+    } else if (!atBottom && distance < 40) {
+      atBottom = true;
+    }
+    atBottomRef.current = atBottom;
+    setShowScrollToBottom(!atBottom);
+    setComposerCollapsed(!atBottom);
+  }, []);
+
   const scrollToBottom = useCallback(() => {
     const el = messageListRef.current;
     if (!el) return;
     programmaticScrollRef.current = true;
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    atBottomRef.current = true;
     setShowScrollToBottom(false);
     setComposerCollapsed(false);
     window.setTimeout(() => {
       programmaticScrollRef.current = false;
-      setShowScrollToBottom(!checkIsAtBottom());
     }, 500);
-  }, [checkIsAtBottom]);
+  }, []);
 
   useEffect(() => {
     const el = messageListRef.current;
     if (!el) return undefined;
     const onScroll = () => {
       if (programmaticScrollRef.current) return;
-      const atBottom = checkIsAtBottom();
-      setShowScrollToBottom(!atBottom);
-      setComposerCollapsed(!atBottom);
+      updateScrollState();
     };
     onScroll();
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [checkIsAtBottom, activeDrawConversationId]);
+  }, [updateScrollState, activeDrawConversationId]);
 
   useEffect(() => {
     const rafId = requestAnimationFrame(() => {
-      const atBottom = checkIsAtBottom();
-      setShowScrollToBottom(!atBottom);
-      setComposerCollapsed(!atBottom);
+      updateScrollState();
     });
     return () => cancelAnimationFrame(rafId);
-  }, [activeDrawMessages, isGenerating, checkIsAtBottom]);
+  }, [activeDrawMessages, isGenerating, updateScrollState]);
 
   const isPendingDrawMessage = (message) => (
     message.role === 'assistant' &&
@@ -724,29 +738,7 @@ export default function DrawPage({
               )}
             />
           )}
-        </div>
-
-        <footer className="composer-panel">
-          {drawSelectMode ? (
-            <div className="select-action-bar">
-              <Button className="select-action-btn select-action-btn-user" type="default" size="small" onClick={selectAllDrawUserMessages}>
-                全选用户
-              </Button>
-              <Button className="select-action-btn select-action-btn-ai" type="default" size="small" onClick={selectAllDrawAssistantMessages}>
-                全选 AI
-              </Button>
-              <Button
-                className="select-action-btn select-action-btn-delete"
-                type="primary"
-                danger
-                size="small"
-                onClick={deleteSelectedDrawMessages}
-                disabled={drawSelectedMessageIds.size === 0}
-              >
-                删除({drawSelectedMessageIds.size})
-              </Button>
-            </div>
-          ) : composerCollapsed ? (
+          {composerCollapsed && !drawSelectMode && (
             <button
               type="button"
               className="composer-fab"
@@ -758,9 +750,33 @@ export default function DrawPage({
                 <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
               </svg>
             </button>
-          ) : (
-            <>
-              {isGenerating && (
+          )}
+        </div>
+
+        {!(composerCollapsed && !drawSelectMode) && (
+          <footer className="composer-panel">
+            {drawSelectMode ? (
+              <div className="select-action-bar">
+                <Button className="select-action-btn select-action-btn-user" type="default" size="small" onClick={selectAllDrawUserMessages}>
+                  全选用户
+                </Button>
+                <Button className="select-action-btn select-action-btn-ai" type="default" size="small" onClick={selectAllDrawAssistantMessages}>
+                  全选 AI
+                </Button>
+                <Button
+                  className="select-action-btn select-action-btn-delete"
+                  type="primary"
+                  danger
+                  size="small"
+                  onClick={deleteSelectedDrawMessages}
+                  disabled={drawSelectedMessageIds.size === 0}
+                >
+                  删除({drawSelectedMessageIds.size})
+                </Button>
+              </div>
+            ) : (
+              <>
+                {isGenerating && (
                 <div className="draw-waiting-bar">
                   <span className="draw-waiting-dot" />
                   <span>{pendingDrawTaskCount} 个任务正在异步生成，可继续提交</span>
@@ -940,6 +956,7 @@ export default function DrawPage({
             onChange={handleDrawFileChange}
           />
         </footer>
+        )}
       </main>
 
       <ConfirmDialog

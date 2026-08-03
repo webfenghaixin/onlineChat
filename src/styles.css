@@ -974,7 +974,11 @@ button:disabled {
 }
 
 .composer-fab {
-  justify-self: end;
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 6;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -990,12 +994,12 @@ button:disabled {
 }
 
 .composer-fab:hover {
-  transform: scale(1.06);
+  transform: translateX(-50%) scale(1.06);
   box-shadow: 0 6px 20px rgba(84, 201, 191, 0.45);
 }
 
 .composer-fab:active {
-  transform: scale(0.96);
+  transform: translateX(-50%) scale(0.96);
 }
 
 .composer-box,

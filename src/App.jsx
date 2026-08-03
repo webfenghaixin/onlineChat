@@ -168,6 +168,7 @@ export default function App() {
   const messageListRef = useRef(null);
   const cloudSaveTimerRef = useRef(null);
   const programmaticScrollRef = useRef(false);
+  const atBottomRef = useRef(true);
   const cloudSavingRef = useRef(null);
   const cloudLoadingRef = useRef(false);
   const cloudSessionRef = useRef(0);
@@ -649,11 +650,29 @@ export default function App() {
     return undefined;
   }, [authState, drawConversations, settings]);
 
-  // 判断是否在底部（阈值 80px）
+  // 判断是否在底部（阈值 80px，用于程序触发场景）
   const checkIsAtBottom = useCallback(() => {
     const el = messageListRef.current;
     if (!el) return true;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
+  // 带滞后阈值的滚动状态更新，避免边界反复横跳导致输入框闪烁
+  // 进入底部需 distance < 40px（严格），离开底部需 distance > 120px（宽松）
+  // 40~120px 之间为死区，状态保持不变
+  const updateScrollState = useCallback(() => {
+    const el = messageListRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    let atBottom = atBottomRef.current;
+    if (atBottom && distance > 120) {
+      atBottom = false;
+    } else if (!atBottom && distance < 40) {
+      atBottom = true;
+    }
+    atBottomRef.current = atBottom;
+    setShowScrollToBottom(!atBottom);
+    setComposerCollapsed(!atBottom);
   }, []);
 
   // 滚动到底部（用户点击按钮时调用）
@@ -662,6 +681,7 @@ export default function App() {
     if (el) {
       programmaticScrollRef.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      atBottomRef.current = true;
       setShowScrollToBottom(false);
       setComposerCollapsed(false);
       setTimeout(() => { programmaticScrollRef.current = false; }, 500);
@@ -674,6 +694,7 @@ export default function App() {
     if (el) {
       programmaticScrollRef.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      atBottomRef.current = true;
       setShowScrollToBottom(false);
       setComposerCollapsed(false);
       setTimeout(() => { programmaticScrollRef.current = false; }, 500);
@@ -686,26 +707,22 @@ export default function App() {
     if (!el) return;
     const onScroll = () => {
       if (programmaticScrollRef.current) return;
-      const atBottom = checkIsAtBottom();
-      setShowScrollToBottom(!atBottom);
-      setComposerCollapsed(!atBottom);
+      updateScrollState();
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [checkIsAtBottom, authState]);
+  }, [updateScrollState, authState]);
 
   useEffect(() => {
     if (authState !== 'authenticated') return undefined;
 
     const rafId = requestAnimationFrame(() => {
       if (programmaticScrollRef.current) return;
-      const atBottom = checkIsAtBottom();
-      setShowScrollToBottom(!atBottom);
-      setComposerCollapsed(!atBottom);
+      updateScrollState();
     });
 
     return () => cancelAnimationFrame(rafId);
-  }, [latestMessageRenderKey, visibleMessageCount, checkIsAtBottom, authState]);
+  }, [latestMessageRenderKey, visibleMessageCount, updateScrollState, authState]);
 
   // 登录完成后滚到底一次
   useEffect(() => {
@@ -1964,21 +1981,22 @@ export default function App() {
               }
             />
           )}
+          {composerCollapsed && !selectMode && (
+            <button
+              type="button"
+              className="composer-fab"
+              onClick={() => setComposerCollapsed(false)}
+              aria-label="展开输入框"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="6" width="20" height="12" rx="2" />
+                <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
+              </svg>
+            </button>
+          )}
         </div>
 
-        {composerCollapsed && !selectMode ? (
-          <button
-            type="button"
-            className="composer-fab"
-            onClick={() => setComposerCollapsed(false)}
-            aria-label="展开输入框"
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="6" width="20" height="12" rx="2" />
-              <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
-            </svg>
-          </button>
-        ) : (
+        {!(composerCollapsed && !selectMode) && (
           <Composer
             draft={draft}
             setDraft={setDraft}

@@ -14,20 +14,22 @@ export const VITE_INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
 export const MAX_COMPOSER_HEIGHT = 140;
 export const GEMINI_MODEL_ID = 'gemini-3.1-pro';
 export const DRAW_REFERENCE_MAX_DIMENSION = 1280;
-export const DRAW_REFERENCE_MAX_BYTES = 1 * 1024 * 1024;
+// 7 张参考图 × 0.4MB × 1.33(base64) ≈ 3.7MB，加 payload 控制在 4.5MB 以内
+export const DRAW_REFERENCE_MAX_BYTES = 0.4 * 1024 * 1024;
 export const DRAW_REFERENCE_MIN_QUALITY = 0.5;
-export const DRAW_MAX_REFERENCE_IMAGES = 3;
+export const DRAW_MAX_REFERENCE_IMAGES = 7;
 export const DRAW_MIN_BATCH_COUNT = 1;
 export const DRAW_MAX_BATCH_COUNT = 20;
 
 // 聊天页面上传图片的压缩参数
 // Vercel Serverless Function 请求体上限 4.5MB，base64 编码会膨胀约 33%，
-// 3张图片各压到 1MB 以内，加上对话历史等 payload，总请求体控制在 4.5MB 以内
+// 7 张图片各压到 0.4MB 以内，加上对话历史等 payload，总请求体控制在 4.5MB 以内
 export const CHAT_IMAGE_MAX_DIMENSION = 1024;
-export const CHAT_IMAGE_MAX_BYTES = 1 * 1024 * 1024;
+export const CHAT_IMAGE_MAX_BYTES = 0.4 * 1024 * 1024;
 export const CHAT_IMAGE_MIN_QUALITY = 0.45;
-export const CHAT_MAX_IMAGES = 3;
-export const DRAW_MAX_IMAGES = 100;
+export const CHAT_MAX_IMAGES = 7;
+// 解除制图历史照片上限（原 100 张），保留 enforceDrawLimit 逻辑备用，设为极大值即不触发
+export const DRAW_MAX_IMAGES = 100000;
 
 // 余额系统（与服务端 api/lib/auth-utils.js 保持一致）
 export const COST_CHAT = 0.05;

@@ -106,6 +106,7 @@ export default function DrawPage({
   }, [generatedDrawGallery, openPreview]);
   const [copiedId, setCopiedId] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [composerCollapsed, setComposerCollapsed] = useState(false);
   const [drawDrawerTab, setDrawDrawerTab] = useState('history');
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const messageListRef = useRef(null);
@@ -201,6 +202,7 @@ export default function DrawPage({
     programmaticScrollRef.current = true;
     el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     setShowScrollToBottom(false);
+    setComposerCollapsed(false);
     window.setTimeout(() => {
       programmaticScrollRef.current = false;
       setShowScrollToBottom(!checkIsAtBottom());
@@ -212,7 +214,9 @@ export default function DrawPage({
     if (!el) return undefined;
     const onScroll = () => {
       if (programmaticScrollRef.current) return;
-      setShowScrollToBottom(!checkIsAtBottom());
+      const atBottom = checkIsAtBottom();
+      setShowScrollToBottom(!atBottom);
+      setComposerCollapsed(!atBottom);
     };
     onScroll();
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -221,7 +225,9 @@ export default function DrawPage({
 
   useEffect(() => {
     const rafId = requestAnimationFrame(() => {
-      setShowScrollToBottom(!checkIsAtBottom());
+      const atBottom = checkIsAtBottom();
+      setShowScrollToBottom(!atBottom);
+      setComposerCollapsed(!atBottom);
     });
     return () => cancelAnimationFrame(rafId);
   }, [activeDrawMessages, isGenerating, checkIsAtBottom]);
@@ -740,6 +746,18 @@ export default function DrawPage({
                 删除({drawSelectedMessageIds.size})
               </Button>
             </div>
+          ) : composerCollapsed ? (
+            <button
+              type="button"
+              className="composer-fab"
+              onClick={() => setComposerCollapsed(false)}
+              aria-label="展开输入框"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="6" width="20" height="12" rx="2" />
+                <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
+              </svg>
+            </button>
           ) : (
             <>
               {isGenerating && (

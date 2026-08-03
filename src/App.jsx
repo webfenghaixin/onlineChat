@@ -124,6 +124,7 @@ export default function App() {
   const [copiedMessageId, setCopiedMessageId] = useState('');
   const [visibleMessageCount, setVisibleMessageCount] = useState(50);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [composerCollapsed, setComposerCollapsed] = useState(false);
   const [showCompleteHint, setShowCompleteHint] = useState(false);
   const [authState, setAuthState] = useState(() => (getToken() ? 'loading' : 'auth-form'));
   const [authLoadingActive, setAuthLoadingActive] = useState(true);
@@ -662,6 +663,7 @@ export default function App() {
       programmaticScrollRef.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       setShowScrollToBottom(false);
+      setComposerCollapsed(false);
       setTimeout(() => { programmaticScrollRef.current = false; }, 500);
     }
   }, []);
@@ -673,17 +675,20 @@ export default function App() {
       programmaticScrollRef.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       setShowScrollToBottom(false);
+      setComposerCollapsed(false);
       setTimeout(() => { programmaticScrollRef.current = false; }, 500);
     }
   }, []);
 
-  // 监听用户滚动：只在非程序滚动时更新按钮状态
+  // 监听用户滚动：向上滚收起输入框，到底部展开
   useEffect(() => {
     const el = messageListRef.current;
     if (!el) return;
     const onScroll = () => {
       if (programmaticScrollRef.current) return;
-      setShowScrollToBottom(!checkIsAtBottom());
+      const atBottom = checkIsAtBottom();
+      setShowScrollToBottom(!atBottom);
+      setComposerCollapsed(!atBottom);
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
@@ -694,7 +699,9 @@ export default function App() {
 
     const rafId = requestAnimationFrame(() => {
       if (programmaticScrollRef.current) return;
-      setShowScrollToBottom(!checkIsAtBottom());
+      const atBottom = checkIsAtBottom();
+      setShowScrollToBottom(!atBottom);
+      setComposerCollapsed(!atBottom);
     });
 
     return () => cancelAnimationFrame(rafId);
@@ -1959,32 +1966,46 @@ export default function App() {
           )}
         </div>
 
-        <Composer
-          draft={draft}
-          setDraft={setDraft}
-          isSending={isSending}
-          canSend={canSend}
-          sendMessage={sendMessage}
-          stopStreaming={stopStreaming}
-          handleComposerKeyDown={handleComposerKeyDown}
-          selectMode={selectMode}
-          selectedMessageIds={selectedMessageIds}
-          exitSelectMode={exitSelectMode}
-          selectAllUserMessages={selectAllUserMessages}
-          selectAllAssistantMessages={selectAllAssistantMessages}
-          deleteSelectedMessages={deleteSelectedMessages}
-          showCompleteHint={showCompleteHint}
-          errorText={errorText}
-          pendingImages={pendingImages}
-          removePendingImage={removePendingImage}
-          clearPendingImages={clearPendingImages}
-          handleUploadClick={handleUploadClick}
-          imageProcessing={imageProcessing}
-          composerRef={composerRef}
-          fileInputRef={fileInputRef}
-          handleFileChange={handleFileChange}
-          handleComposerPaste={handleComposerPaste}
-        />
+        {composerCollapsed && !selectMode ? (
+          <button
+            type="button"
+            className="composer-fab"
+            onClick={() => setComposerCollapsed(false)}
+            aria-label="展开输入框"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="6" width="20" height="12" rx="2" />
+              <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
+            </svg>
+          </button>
+        ) : (
+          <Composer
+            draft={draft}
+            setDraft={setDraft}
+            isSending={isSending}
+            canSend={canSend}
+            sendMessage={sendMessage}
+            stopStreaming={stopStreaming}
+            handleComposerKeyDown={handleComposerKeyDown}
+            selectMode={selectMode}
+            selectedMessageIds={selectedMessageIds}
+            exitSelectMode={exitSelectMode}
+            selectAllUserMessages={selectAllUserMessages}
+            selectAllAssistantMessages={selectAllAssistantMessages}
+            deleteSelectedMessages={deleteSelectedMessages}
+            showCompleteHint={showCompleteHint}
+            errorText={errorText}
+            pendingImages={pendingImages}
+            removePendingImage={removePendingImage}
+            clearPendingImages={clearPendingImages}
+            handleUploadClick={handleUploadClick}
+            imageProcessing={imageProcessing}
+            composerRef={composerRef}
+            fileInputRef={fileInputRef}
+            handleFileChange={handleFileChange}
+            handleComposerPaste={handleComposerPaste}
+          />
+        )}
       </main>
 
       {drawMode && (

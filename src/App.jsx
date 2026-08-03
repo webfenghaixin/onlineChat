@@ -183,9 +183,11 @@ export default function App() {
   const newDrawConvRef = useRef(new Set());
   const conversationsRef = useRef(conversations);
   const drawConversationsRef = useRef(drawConversations);
+  const activeDrawConversationIdRef = useRef(activeDrawConversationId);
 
   conversationsRef.current = conversations;
   drawConversationsRef.current = drawConversations;
+  activeDrawConversationIdRef.current = activeDrawConversationId;
 
   const convLoading = loadingConversationId === activeConversationId;
   const drawConvLoading = loadingDrawConversationId === activeDrawConversationId;
@@ -324,6 +326,32 @@ export default function App() {
       }
     } catch {
       setErrorText('加载画图记录失败，请重试');
+    } finally {
+      loadingDrawConversationIdsRef.current.delete(conversationId);
+      setLoadingDrawConversationId((current) => (current === conversationId ? null : current));
+    }
+  }, []);
+
+  // 强制刷新绘图会话消息（绕过 messagesLoaded 检查），用于页面切回时同步后端最新状态
+  const refreshDrawConversationMessages = useCallback(async (conversationId) => {
+    if (!conversationId) return;
+    if (loadingDrawConversationIdsRef.current.has(conversationId)) return;
+    loadingDrawConversationIdsRef.current.add(conversationId);
+    setLoadingDrawConversationId(conversationId);
+    try {
+      const data = await fetchDrawConversation(conversationId);
+      if (Array.isArray(data.messages)) {
+        const normalizedMessages = data.messages.map((m) => normalizeMessage(m, data.updatedAt));
+        setDrawConversations((current) =>
+          current.map((c) =>
+            c.id === conversationId
+              ? { ...c, messages: normalizedMessages, messagesLoaded: true, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalizedMessages.length, imageCount: normalizedMessages.filter((m) => m.role === 'assistant' && m.imageUrl).length }
+              : c,
+          ),
+        );
+      }
+    } catch {
+      // 静默失败，不影响用户体验
     } finally {
       loadingDrawConversationIdsRef.current.delete(conversationId);
       setLoadingDrawConversationId((current) => (current === conversationId ? null : current));
@@ -523,6 +551,33 @@ export default function App() {
     };
   }, [authState]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 页面切回时：abort 旧轮询，清理 refs，刷新消息，让恢复 useEffect 重新扫描 pending 任务
+  useEffect(() => {
+    if (authState !== 'authenticated') return undefined;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+
+      // abort 所有正在进行的轮询（旧循环可能已超时或 fetch 被中断）
+      for (const controller of drawTaskControllersRef.current.values()) {
+        controller.abort();
+      }
+      drawTaskControllersRef.current.clear();
+      // 清理 refs，允许恢复 useEffect 重新扫描 pending 任务
+      activeDrawTaskIdsRef.current.clear();
+      resumedDrawTasksRef.current.clear();
+
+      // 强制刷新当前活跃会话的消息（从 Redis 获取最新状态）
+      const activeConvId = activeDrawConversationIdRef.current;
+      if (activeConvId) {
+        refreshDrawConversationMessages(activeConvId);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [authState, refreshDrawConversationMessages]);
+
   useEffect(() => {
     if (authState !== 'authenticated') return undefined;
 
@@ -559,7 +614,7 @@ export default function App() {
       pollDrawTask({
         settings,
         taskId: task.taskId,
-        startedAt: task.createdAt,
+        startedAt: Date.now(),
         signal: controller.signal,
         onImage: (imageUrl, taskTiming) => {
           const durationSeconds = resolveDrawDurationSeconds(taskTiming, task.createdAt);
@@ -1208,18 +1263,13 @@ export default function App() {
       }
     } catch (error) {
       if (error.name === 'AbortError') {
-        // 取消时移除未完成的 assistantMessage（无 imageUrl、无 error 的）
-        updateDrawConversation(targetConvId, (conv) => {
-          const remaining = (conv.messages || []).filter((message) =>
-            !(message.batchId === batchId && message.role === 'assistant' && !message.imageUrl && !message.error)
-          );
-          const hasBatchResult = remaining.some((message) => message.role === 'assistant' && message.batchId === batchId);
-          return {
-            ...conv,
-            messages: hasBatchResult ? remaining : remaining.filter((message) => message.id !== userMessage.id),
-          };
-        });
-        setStatusText('图片生成已停止');
+        // AbortError：保持 pending 状态，不标记 error，不移除消息
+        // 页面切回时 visibilitychange 会刷新消息并重新恢复轮询
+        setStatusText('图片生成已暂停');
+      } else if (error instanceof TypeError) {
+        // 网络错误：保持 pending 状态，不标记 error
+        // 后端任务可能仍在运行，切回时会重新查询
+        setStatusText('网络中断，任务在后端继续执行');
       } else {
         const nextErrorText = error.message || '图片生成失败，请重试。';
         // 批量接口整体失败：标记所有未完成的 assistantMessage 为 error

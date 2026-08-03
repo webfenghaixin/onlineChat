@@ -1202,10 +1202,12 @@ export default function App() {
           conversationId: targetConvId,
           conversationTitle: activeConv?.id === targetConvId ? activeConv.title : prompt.slice(0, 18),
           activeDrawConversationId: targetConvId,
-          userMessage: referenceImages.length > 0
-            ? { ...userMessage, referenceImage: undefined, referenceImages: undefined }
-            : userMessage,
+          userMessage,
           assistantMessages,
+        },
+        onTasksCreated: () => {
+          // batch 请求返回后立即释放提交锁，不等轮询完成，用户可继续提交
+          releaseSubmission();
         },
         onTaskStart: (taskId, messageId) => {
           startedTaskCount += 1;

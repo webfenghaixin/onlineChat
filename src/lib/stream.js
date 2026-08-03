@@ -1002,6 +1002,7 @@ export async function generateImageBatch({
   signal,
   onImage,
   onTaskStart,
+  onTasksCreated,
   taskMetadata,
 }) {
   const startedAt = Date.now();
@@ -1044,6 +1045,9 @@ export async function generateImageBatch({
   for (const { messageId, taskId } of tasks) {
     onTaskStart?.(taskId, messageId);
   }
+
+  // 任务已创建完成，通知调用方可以释放提交锁（不等轮询完成）
+  onTasksCreated?.();
 
   // 并行轮询所有任务（轮询是轻量 GET，无锁竞争）
   // 用 allSettled：单个任务失败不中断其他轮询，由调用方根据结果处理

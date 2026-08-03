@@ -99,15 +99,11 @@ export default async function handler(req, res) {
     return;
   }
 
-  const sanitizedUserMessage = userMessage.referenceImage
-    ? { ...userMessage, referenceImage: undefined }
-    : userMessage;
-
   const baseMetadata = {
     conversationId: String(rawMetadata.conversationId || ''),
     conversationTitle: String(rawMetadata.conversationTitle || userMessage.content || '新的画图').slice(0, 18),
     activeDrawConversationId: String(rawMetadata.activeDrawConversationId || rawMetadata.conversationId || ''),
-    userMessage: sanitizedUserMessage,
+    userMessage,
   };
 
   if (!baseMetadata.conversationId) {
@@ -130,7 +126,7 @@ export default async function handler(req, res) {
       metadata: normalizeTaskMetadata(
         {
           ...rawMetadata,
-          userMessage: sanitizedUserMessage,
+          userMessage,
           assistantMessage,
         },
         taskId,

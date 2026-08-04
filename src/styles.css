@@ -483,7 +483,7 @@ button:disabled {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 18px 14px calc(var(--composer-height, 80px) + 10px);
+  padding: 18px 14px calc(var(--composer-height, 80px) + var(--keyboard-offset, 0px) + 10px);
   scroll-behavior: smooth;
 }
 
@@ -511,7 +511,8 @@ button:disabled {
 .scroll-to-bottom-button {
   position: absolute;
   right: 16px;
-  bottom: calc(30px + var(--keyboard-offset, 0px));
+  /* 键盘弹出时上移到输入框（--keyboard-offset）之上，再让出输入框高度（--composer-height），保证不被遮挡 */
+  bottom: calc(30px + var(--keyboard-offset, 0px) + var(--composer-height, 80px));
   z-index: 4;
   transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease, box-shadow 0.22s ease;
 }
@@ -1001,7 +1002,8 @@ button:disabled {
 .composer-fab {
   position: absolute;
   left: 50%;
-  bottom: 16px;
+  /* 键盘弹出时若用户手动收起输入框，FAB 需让出键盘高度以免被遮挡 */
+  bottom: calc(16px + var(--keyboard-offset, 0px));
   transform: translateX(-50%) scale(0.6);
   z-index: 6;
   display: flex;
@@ -1999,7 +2001,7 @@ button:disabled {
   }
 
   .message-list {
-    padding: 14px 12px calc(var(--composer-height, 80px) + 10px);
+    padding: 14px 12px calc(var(--composer-height, 80px) + var(--keyboard-offset, 0px) + 10px);
     -webkit-overflow-scrolling: touch; /* iOS惯性滚动 */
   }
 
@@ -2121,10 +2123,10 @@ button:disabled {
     border-radius: 12px;
   }
 
-  /* 滚动到底部按钮 */
+  /* 滚动到底部按钮（键盘弹出时让出键盘 + 输入框高度） */
   .scroll-to-bottom-button {
     right: 10px;
-    bottom: calc(30px + env(safe-area-inset-bottom));
+    bottom: calc(30px + var(--keyboard-offset, 0px) + var(--composer-height, 80px) + env(safe-area-inset-bottom));
   }
 
   /* 加载更多 */
@@ -2287,7 +2289,7 @@ button:disabled {
 
   .scroll-to-bottom-button {
     right: 28px;
-    bottom: calc(30px + var(--keyboard-offset, 0px));
+    bottom: calc(30px + var(--keyboard-offset, 0px) + var(--composer-height, 80px));
   }
 
   .drawer {
@@ -3063,7 +3065,7 @@ select {
 }
 
 .message-list {
-  padding: 24px 20px calc(var(--composer-height, 80px) + 10px);
+  padding: 24px 20px calc(var(--composer-height, 80px) + var(--keyboard-offset, 0px) + 10px);
   background:
     linear-gradient(180deg, rgba(255, 255, 252, 0.38) 0%, rgba(255, 255, 252, 0.12) 100%),
     url('/chat-bg.jpg') center / cover no-repeat,
@@ -3746,7 +3748,7 @@ select {
   }
 
   .message-list {
-    padding: 16px 12px calc(var(--composer-height, 80px) + 10px);
+    padding: 16px 12px calc(var(--composer-height, 80px) + var(--keyboard-offset, 0px) + 10px);
   }
 
   .message-content-col {
@@ -3811,7 +3813,7 @@ select {
   }
 
   .draw-page .message-list {
-    padding: 14px 12px calc(var(--composer-height, 80px) + 10px);
+    padding: 14px 12px calc(var(--composer-height, 80px) + var(--keyboard-offset, 0px) + 10px);
   }
 
   .draw-page .message-list-wrapper {

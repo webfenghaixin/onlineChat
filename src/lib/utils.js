@@ -1,9 +1,9 @@
 import { marked } from 'marked';
 import {
   STORAGE_KEY,
-  GEMINI_MODEL_ID,
   defaultSettings,
   DEFAULT_PROXY_PATH,
+  MODEL_OPTIONS,
 } from './constants';
 
 marked.setOptions({
@@ -27,10 +27,6 @@ export function renderMarkdown(text) {
   return html;
 }
 
-export function isGeminiModel(model) {
-  return String(model || '').toLowerCase().startsWith('gemini');
-}
-
 export function normalizeModelSettings(settings) {
   const nextSettings = {
     ...settings,
@@ -40,14 +36,11 @@ export function normalizeModelSettings(settings) {
     proxyPath: DEFAULT_PROXY_PATH,
   };
 
-  if (isGeminiModel(nextSettings.model)) {
-    nextSettings.source = 'rightcode';
-    nextSettings.requestMode = 'gemini';
-    nextSettings.endpoint = '';
-    nextSettings.apiKey = '';
-  } else {
-    nextSettings.requestMode = 'chat';
+  // 历史数据迁移：已下线的模型（gpt-5.4/5.5/gemini-3.1-pro 等）回退到默认模型
+  if (!MODEL_OPTIONS.some((option) => option.value === nextSettings.model)) {
+    nextSettings.model = defaultSettings.model;
   }
+  nextSettings.requestMode = 'chat';
 
   return nextSettings;
 }

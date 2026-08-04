@@ -12,7 +12,6 @@ export function resolveApiUrl(path) {
 export const STORAGE_KEY = 'online-chat-h5-state-v7';
 export const VITE_INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
 export const MAX_COMPOSER_HEIGHT = 140;
-export const GEMINI_MODEL_ID = 'gemini-3.1-pro';
 export const DRAW_REFERENCE_MAX_DIMENSION = 1280;
 // 7 张参考图 × 0.4MB × 1.33(base64) ≈ 3.7MB，加 payload 控制在 4.5MB 以内
 export const DRAW_REFERENCE_MAX_BYTES = 0.4 * 1024 * 1024;
@@ -53,11 +52,9 @@ export const RIGHTCODE_PRICING_OPTIONS = [
 ];
 
 export const MODEL_OPTIONS = [
-  { value: 'gpt-5.5', label: 'GPT-5.5' },
-  { value: 'gpt-5.4', label: 'GPT-5.4' },
-  { value: 'gpt-5.4-medium', label: 'GPT-5.4-Medium' },
-  { value: 'gpt-5.4-high', label: 'GPT-5.4-High' },
-  { value: GEMINI_MODEL_ID, label: 'Gemini 3.1 Pro' },
+  { value: 'gpt-5.6-luna', label: 'GPT-5.6-luna' },
+  { value: 'gpt-5.6-terra', label: 'GPT-5.6-terra' },
+  { value: 'gpt-5.6-sol', label: 'GPT-5.6-sol' },
 ];
 
 export const DRAW_MODEL_OPTIONS = [
@@ -90,7 +87,7 @@ export const defaultSettings = {
   rightcodePricing: 'regular',
   endpoint: '',
   apiKey: '',
-  model: 'gpt-5.4',
+  model: 'gpt-5.6-luna',
   requestMode: 'chat',
   systemPrompt: '你是一位耐心、清晰、友好的 AI 助手。请优先用简洁易懂的中文回答。',
   temperature: 0.7,

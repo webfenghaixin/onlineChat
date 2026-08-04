@@ -328,10 +328,9 @@ onlineChat/
 
 | 模型 ID | 显示名 | 来源 |
 |---------|--------|------|
-| gpt-5.5 | GPT-5.5 | Luxee/RightCode |
-| gpt-5.4 | GPT-5.4 | Luxee/RightCode |
-| gpt-5.4-medium | GPT-5.4-Medium | Luxee/RightCode |
-| gpt-5.4-high | GPT-5.4-High | Luxee/RightCode |
+| gpt-5.6-luna | GPT-5.6-luna | RightCode |
+| gpt-5.6-terra | GPT-5.6-terra | RightCode |
+| gpt-5.6-sol | GP-5.6-sol | RightCode |
 | gemini-3.1-pro | Gemini 3.1 Pro | RightCode/Gemini |
 | gpt-image-2 | (画图模型) | RightCode/Draw |
 

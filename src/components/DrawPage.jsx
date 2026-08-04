@@ -115,6 +115,8 @@ export default function DrawPage({
   const atBottomRef = useRef(true);
   const userExpandedRef = useRef(false);
   const userCollapsedRef = useRef(false);
+  // 用户手动收起后，必须先把列表滚离底部，回到底部时才自动展开，避免收起瞬间被滚动事件弹回
+  const collapsedLeftBottomRef = useRef(false);
   const keyboardVisibleRef = useRef(false);
   const collapseDebounceRef = useRef(0);
   const drawImageProcessingRef = useRef(false);
@@ -223,10 +225,15 @@ export default function DrawPage({
       return;
     }
 
-    // 用户手动收起后，滚回底部时自动展开
+    // 用户手动收起后，需先把列表滚离底部（distance > 半个屏幕）才解除锁定，
+    // 滚回底部时自动展开；避免收起后 padding 变化触发的滚动事件瞬间弹回
     if (userCollapsedRef.current) {
-      if (distance < 40) {
+      if (!collapsedLeftBottomRef.current && distance > leaveThreshold) {
+        collapsedLeftBottomRef.current = true;
+      }
+      if (collapsedLeftBottomRef.current && distance < 40) {
         userCollapsedRef.current = false;
+        collapsedLeftBottomRef.current = false;
         atBottomRef.current = true;
         setComposerCollapsed(false);
       }
@@ -274,6 +281,7 @@ export default function DrawPage({
   const collapseComposer = useCallback(() => {
     userCollapsedRef.current = true;
     userExpandedRef.current = false;
+    collapsedLeftBottomRef.current = false;
     atBottomRef.current = false;
     setComposerCollapsed(true);
   }, []);
@@ -282,14 +290,27 @@ export default function DrawPage({
     const el = messageListRef.current;
     if (!el) return;
     programmaticScrollRef.current = true;
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-    atBottomRef.current = true;
     userExpandedRef.current = false;
+    userCollapsedRef.current = false;
+    collapsedLeftBottomRef.current = false;
+    atBottomRef.current = true;
     setShowScrollToBottom(false);
     setComposerCollapsed(false);
+    const doScroll = () => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    doScroll();
+    // 输入框展开会让底部 padding（--composer-height）变大，滚动目标后移；
+    // 等布局稳定后重定向一次，确保平滑滚动朝真正的底部进行
+    requestAnimationFrame(() => requestAnimationFrame(doScroll));
+    // 兜底：平滑滚动可能被输入框展开引起的布局变化打断，结束时精确校正到最底部
     window.setTimeout(() => {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight > 4) {
+        const prevBehavior = el.style.scrollBehavior;
+        el.style.scrollBehavior = 'auto';
+        el.scrollTop = el.scrollHeight;
+        el.style.scrollBehavior = prevBehavior;
+      }
       programmaticScrollRef.current = false;
-    }, 500);
+    }, 700);
   }, []);
 
   // FAB 可见性同步：收起时延迟显示（等 Composer 缩小动画），展开时立即隐藏
@@ -307,18 +328,20 @@ export default function DrawPage({
   useEffect(() => {
     const list = messageListRef.current;
     if (!list) return undefined;
+    // 变量设置在父容器（message-list-wrapper）上，滚动到底按钮（兄弟元素）也能读取
+    const host = list.parentElement || list;
     if (drawSelectMode) {
-      list.style.setProperty('--composer-height', '0px');
+      host.style.setProperty('--composer-height', '0px');
       return undefined;
     }
     const panel = composerPanelRef.current;
     if (!panel) {
-      list.style.setProperty('--composer-height', composerCollapsed ? '68px' : '80px');
+      host.style.setProperty('--composer-height', composerCollapsed ? '68px' : '80px');
       return undefined;
     }
     const apply = () => {
       const h = composerCollapsed ? 68 : panel.offsetHeight;
-      list.style.setProperty('--composer-height', `${h}px`);
+      host.style.setProperty('--composer-height', `${h}px`);
     };
     apply();
     const ro = new ResizeObserver(apply);
@@ -327,10 +350,27 @@ export default function DrawPage({
   }, [composerCollapsed, drawSelectMode]);
 
   // 监听键盘弹出状态（通过全局 --keyboard-offset CSS 变量同步）
+  // 延迟到 rAF 再读取：useScrollCollapse 也在同一帧内更新该变量，需等它先写入
   useEffect(() => {
+    let rafId = null;
     const checkKeyboard = () => {
-      const offset = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-offset') || '0');
-      keyboardVisibleRef.current = offset > 0;
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const offset = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--keyboard-offset') || '0');
+        const visible = offset > 0;
+        // 键盘刚弹出且正停留在底部时，底部 padding 会随 --keyboard-offset 增大，
+        // 需自动滚到新底部，避免最后一条消息被键盘盖住
+        if (visible && !keyboardVisibleRef.current && atBottomRef.current) {
+          const el = messageListRef.current;
+          if (el) {
+            programmaticScrollRef.current = true;
+            el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+            window.setTimeout(() => { programmaticScrollRef.current = false; }, 500);
+          }
+        }
+        keyboardVisibleRef.current = visible;
+      });
     };
     checkKeyboard();
     const vv = window.visualViewport;
@@ -339,6 +379,7 @@ export default function DrawPage({
     window.addEventListener('focusin', checkKeyboard);
     window.addEventListener('focusout', checkKeyboard);
     return () => {
+      if (rafId) cancelAnimationFrame(rafId);
       vv?.removeEventListener('resize', checkKeyboard);
       vv?.removeEventListener('scroll', checkKeyboard);
       window.removeEventListener('focusin', checkKeyboard);

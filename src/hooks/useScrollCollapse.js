@@ -22,6 +22,8 @@ export function useScrollCollapse({
   const userCollapsedRef = useRef(false);
   const keyboardVisibleRef = useRef(false);
   const collapseDebounceRef = useRef(0);
+  // 用户手动收起后，必须先把列表滚离底部，回到底部时才自动展开，避免收起瞬间被滚动事件弹回
+  const collapsedLeftBottomRef = useRef(false);
 
   // 带滞后阈值的滚动状态更新
   // 进入底部需 distance < 40px，离开底部需 distance > 半个屏幕
@@ -42,10 +44,15 @@ export function useScrollCollapse({
       return;
     }
 
-    // 用户手动收起后，滚回底部时自动展开
+    // 用户手动收起后，需先把列表滚离底部（distance > 半个屏幕）才解除锁定，
+    // 滚回底部时自动展开；避免收起后 padding 变化触发的滚动事件瞬间弹回
     if (userCollapsedRef.current) {
-      if (distance < 40) {
+      if (!collapsedLeftBottomRef.current && distance > leaveThreshold) {
+        collapsedLeftBottomRef.current = true;
+      }
+      if (collapsedLeftBottomRef.current && distance < 40) {
         userCollapsedRef.current = false;
+        collapsedLeftBottomRef.current = false;
         atBottomRef.current = true;
         setComposerCollapsed(false);
       }
@@ -89,34 +96,61 @@ export function useScrollCollapse({
   const collapseComposer = useCallback(() => {
     userCollapsedRef.current = true;
     userExpandedRef.current = false;
+    collapsedLeftBottomRef.current = false;
     atBottomRef.current = false;
     setComposerCollapsed(true);
   }, []);
 
   const scrollToBottom = useCallback(() => {
     const el = messageListRef.current;
-    if (el) {
-      programmaticScrollRef.current = true;
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-      atBottomRef.current = true;
-      userExpandedRef.current = false;
-      setShowScrollToBottom(false);
-      setComposerCollapsed(false);
-      setTimeout(() => { programmaticScrollRef.current = false; }, 500);
-    }
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    userExpandedRef.current = false;
+    userCollapsedRef.current = false;
+    collapsedLeftBottomRef.current = false;
+    atBottomRef.current = true;
+    setShowScrollToBottom(false);
+    setComposerCollapsed(false);
+    const doScroll = () => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    doScroll();
+    // 输入框展开会让底部 padding（--composer-height）变大，滚动目标后移；
+    // 等布局稳定后重定向一次，确保平滑滚动朝真正的底部进行
+    requestAnimationFrame(() => requestAnimationFrame(doScroll));
+    // 兜底：平滑滚动可能被输入框展开引起的布局变化打断，结束时精确校正到最底部
+    window.setTimeout(() => {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight > 4) {
+        const prevBehavior = el.style.scrollBehavior;
+        el.style.scrollBehavior = 'auto';
+        el.scrollTop = el.scrollHeight;
+        el.style.scrollBehavior = prevBehavior;
+      }
+      programmaticScrollRef.current = false;
+    }, 700);
   }, [messageListRef]);
 
   const forceScrollToBottom = useCallback(() => {
     const el = messageListRef.current;
-    if (el) {
-      programmaticScrollRef.current = true;
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-      atBottomRef.current = true;
-      userExpandedRef.current = false;
-      setShowScrollToBottom(false);
-      setComposerCollapsed(false);
-      setTimeout(() => { programmaticScrollRef.current = false; }, 500);
-    }
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    userExpandedRef.current = false;
+    userCollapsedRef.current = false;
+    collapsedLeftBottomRef.current = false;
+    atBottomRef.current = true;
+    setShowScrollToBottom(false);
+    setComposerCollapsed(false);
+    const doScroll = () => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    doScroll();
+    // 输入框展开会让底部 padding 变大，等布局稳定后重定向一次
+    requestAnimationFrame(() => requestAnimationFrame(doScroll));
+    window.setTimeout(() => {
+      if (el.scrollHeight - el.scrollTop - el.clientHeight > 4) {
+        const prevBehavior = el.style.scrollBehavior;
+        el.style.scrollBehavior = 'auto';
+        el.scrollTop = el.scrollHeight;
+        el.style.scrollBehavior = prevBehavior;
+      }
+      programmaticScrollRef.current = false;
+    }, 700);
   }, [messageListRef]);
 
   // FAB 可见性同步
@@ -188,6 +222,16 @@ export function useScrollCollapse({
         '--keyboard-offset',
         `${Math.round(visible ? keyboardOffset : 0)}px`,
       );
+      // 键盘刚弹出且正停留在底部时，底部 padding 会随 --keyboard-offset 增大，
+      // 需自动滚到新底部，避免最后一条消息被键盘盖住
+      if (visible && !keyboardVisibleRef.current && atBottomRef.current) {
+        const el = messageListRef.current;
+        if (el) {
+          programmaticScrollRef.current = true;
+          el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+          setTimeout(() => { programmaticScrollRef.current = false; }, 500);
+        }
+      }
       keyboardVisibleRef.current = visible;
     }
 

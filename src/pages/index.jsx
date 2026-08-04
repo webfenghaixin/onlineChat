@@ -105,20 +105,22 @@ export default function IndexPage() {
   useEffect(() => {
     const list = chat.messageListRef.current;
     if (!list) return undefined;
+    // 变量设置在父容器（message-list-wrapper）上，滚动到底按钮（兄弟元素）也能读取
+    const host = list.parentElement || list;
     // 选择模式下无输入框，无需底部留白
     if (chat.selectMode) {
-      list.style.setProperty('--composer-height', '0px');
+      host.style.setProperty('--composer-height', '0px');
       return undefined;
     }
     const wrap = composerWrapRef.current;
     const panel = wrap?.querySelector('.composer-panel');
     if (!panel) {
-      list.style.setProperty('--composer-height', composerCollapsed ? '68px' : '80px');
+      host.style.setProperty('--composer-height', composerCollapsed ? '68px' : '80px');
       return undefined;
     }
     const apply = () => {
       const h = composerCollapsed ? 68 : panel.offsetHeight;
-      list.style.setProperty('--composer-height', `${h}px`);
+      host.style.setProperty('--composer-height', `${h}px`);
     };
     apply();
     const ro = new ResizeObserver(apply);

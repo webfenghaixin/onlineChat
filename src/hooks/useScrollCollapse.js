@@ -242,10 +242,18 @@ export function useScrollCollapse({
         const nextWidth = window.innerWidth || document.documentElement.clientWidth;
         const nextHeight = window.innerHeight || document.documentElement.clientHeight;
         const widthChanged = Math.abs(nextWidth - stableWidth) > 24;
+        // 键盘检测：键盘弹出时（Safari / Android overlays-content）布局视口高度不变、
+        // 可视视口变矮，两者差值≈键盘高度；浏览器工具栏展开/收起时两者同步变化，差值为 0
+        const keyboardActive = Boolean(
+          vv
+          && (window.innerHeight || document.documentElement.clientHeight) - vv.height - vv.offsetTop > 80,
+        );
         if (widthChanged) {
           stableWidth = nextWidth;
           stableHeight = nextHeight;
-        } else if (nextHeight > stableHeight) {
+        } else if (!keyboardActive) {
+          // 非键盘态：布局高度跟随浏览器工具栏（收起变大/展开变小），
+          // 保证 --app-height 与可见区域一致，避免底部按钮被工具栏/键盘遮挡
           stableHeight = nextHeight;
         }
         applyStableHeight();

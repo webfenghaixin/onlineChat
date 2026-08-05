@@ -1002,8 +1002,8 @@ button:disabled {
 .composer-fab {
   position: absolute;
   left: 50%;
-  /* 键盘弹出时若用户手动收起输入框，FAB 需让出键盘高度以免被遮挡 */
-  bottom: calc(16px + var(--keyboard-offset, 0px));
+  /* 让出 iPhone 底部安全区（home 指示条），键盘弹出时再让出键盘高度，避免被遮挡 */
+  bottom: calc(16px + env(safe-area-inset-bottom) + var(--keyboard-offset, 0px));
   transform: translateX(-50%) scale(0.6);
   z-index: 6;
   display: flex;

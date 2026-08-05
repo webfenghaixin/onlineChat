@@ -270,21 +270,44 @@ export default function DrawPage({
     setComposerCollapsed(!atBottom);
   }, []);
 
+  // 布局稳定后校正滚动位置到底部（收起/展开引起底部 padding 变化时，保持底部对齐）
+  const settleToBottom = useCallback((delay = 550) => {
+    window.setTimeout(() => {
+      const el = messageListRef.current;
+      if (!el) return;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight <= 4) return;
+      programmaticScrollRef.current = true;
+      const prevBehavior = el.style.scrollBehavior;
+      el.style.scrollBehavior = 'auto';
+      el.scrollTop = el.scrollHeight;
+      el.style.scrollBehavior = prevBehavior;
+      programmaticScrollRef.current = false;
+    }, delay);
+  }, []);
+
   // 用户点击 FAB 手动展开输入框，锁定状态防止布局变化触发的 scroll 再次收起
   const expandComposer = useCallback(() => {
+    const el = messageListRef.current;
+    const wasAtBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight < 40 : false;
     userExpandedRef.current = true;
     userCollapsedRef.current = false;
     setComposerCollapsed(false);
-  }, []);
+    // 展开后底部 padding 变大，若原本停在底部，等布局稳定后重滚到底部，避免内容不在底部
+    if (wasAtBottom) settleToBottom();
+  }, [settleToBottom]);
 
   // 用户点击收起按钮，锁定收起状态，滚回底部时自动展开
   const collapseComposer = useCallback(() => {
+    const el = messageListRef.current;
+    const wasAtBottom = el ? el.scrollHeight - el.scrollTop - el.clientHeight < 40 : false;
     userCollapsedRef.current = true;
     userExpandedRef.current = false;
     collapsedLeftBottomRef.current = false;
     atBottomRef.current = false;
     setComposerCollapsed(true);
-  }, []);
+    // 收起后底部 padding 变小，若原本停在底部，等布局稳定后保持底部对齐，避免内容底部被裁切
+    if (wasAtBottom) settleToBottom();
+  }, [settleToBottom]);
 
   const scrollToBottom = useCallback(() => {
     const el = messageListRef.current;

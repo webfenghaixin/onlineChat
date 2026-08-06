@@ -111,11 +111,10 @@ export default async function handler(req, res) {
     return;
   }
 
-  // 一次性写入 userMessage + 所有 assistantMessages（只1次锁，无竞争）
-  await upsertBatchDrawTaskRecord(redis, auth.username, baseMetadata, rawAssistantMessages);
-
-  // 循环创建 N 个 task 并异步执行
-  for (const assistantMessage of rawAssistantMessages) {
+  // 先为每个 assistantMessage 生成 taskId，再一次性写入会话记录：
+  // 云端消息必须持久化 taskId，否则前端在页面切回/重新打开、本地状态被
+  // 云端数据覆盖后，无法恢复轮询，会一直卡在"制图中"。
+  const taskRecords = rawAssistantMessages.map((assistantMessage) => {
     const taskId = crypto.randomUUID();
     const taskKey = `drawTask:${auth.username}:${taskId}`;
     const task = {
@@ -134,10 +133,23 @@ export default async function handler(req, res) {
       createdAt: now,
       updatedAt: now,
     };
+    return { task, taskKey, messageId: assistantMessage.id };
+  });
 
+  // 一次性写入 userMessage + 所有 assistantMessages（只1次锁，无竞争）
+  // task.metadata.assistantMessage 已携带 taskId（normalizeTaskMetadata 注入）
+  await upsertBatchDrawTaskRecord(
+    redis,
+    auth.username,
+    baseMetadata,
+    taskRecords.map(({ task }) => task.metadata.assistantMessage),
+  );
+
+  // 循环创建 N 个 task 并异步执行
+  for (const { task, taskKey, messageId } of taskRecords) {
     await setTask(redis, taskKey, task);
     waitUntil(runTask({ redis, taskKey, task, apiKey }));
-    tasks.push({ messageId: assistantMessage.id, taskId });
+    tasks.push({ messageId, taskId: task.id });
   }
 
   sendJson(res, 202, { tasks });

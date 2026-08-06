@@ -8,10 +8,10 @@
 
 - **项目名称**：lightChat（online-chat-h5）
 - **产品定位**：移动端优先的 AI 聊天 + AI 画图 H5 应用
-- **技术栈**：React 18 + Vite 5 + 纯 CSS（无 UI 框架）
+- **技术栈**：React 18 + Vite 5 + animal-island-ui
 - **部署平台**：Vercel（Serverless Functions + 静态托管）
 - **数据存储**：localStorage（本地）+ Upstash Redis（云端同步）
-- **AI 接口**：通过服务端代理转发至 Luxee / RightCode / Gemini 等上游 API
+- **AI 接口**：聊天经 Luxee / RightCode 代理转发，画图经 RightCode Draw 代理
 - **认证方式**：JWT + 邀请码注册
 
 ---

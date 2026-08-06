@@ -143,6 +143,35 @@ export function useDrawActions({
   });
   const { exitDrawSelectMode } = selection;
 
+  // 云端消息合并到本地时，保留本地消息的 taskId：
+  // 部分旧数据云端未持久化 taskId，直接整体替换会导致前端无法恢复轮询，
+  // 消息即使后端已成功也一直卡在"制图中"。
+  const mergeDrawMessages = useCallback((conversationId, cloudMessages, { title, updatedAt } = {}) => {
+    const normalized = cloudMessages.map((m) => normalizeMessage(m, updatedAt));
+    setDrawConversations((current) => {
+      const localMessages = current.find((c) => c.id === conversationId)?.messages || [];
+      const localByMessageId = new Map(localMessages.map((m) => [m.id, m]));
+      const mergedMessages = normalized.map((m) => {
+        if (m.taskId) return m;
+        const localTaskId = localByMessageId.get(m.id)?.taskId;
+        return localTaskId ? { ...m, taskId: localTaskId } : m;
+      });
+      return current.map((c) =>
+        c.id === conversationId
+          ? {
+              ...c,
+              messages: mergedMessages,
+              messagesLoaded: true,
+              title: title || c.title,
+              updatedAt: updatedAt || c.updatedAt,
+              messageCount: mergedMessages.length,
+              imageCount: mergedMessages.filter((msg) => msg.role === 'assistant' && msg.imageUrl).length,
+            }
+          : c,
+      );
+    });
+  }, [setDrawConversations]);
+
   const loadDrawConversationMessages = useCallback(async (conversationId) => {
     const conv = drawConversationsRef.current.find((c) => c.id === conversationId);
     if (!conv || conv.messagesLoaded || newDrawConvRef.current.has(conversationId)) return;
@@ -158,14 +187,7 @@ export function useDrawActions({
     try {
       const data = await fetchDrawConversation(conversationId);
       if (Array.isArray(data.messages)) {
-        const normalized = data.messages.map((m) => normalizeMessage(m, data.updatedAt));
-        setDrawConversations((current) =>
-          current.map((c) =>
-            c.id === conversationId
-              ? { ...c, messages: normalized, messagesLoaded: true, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalized.length, imageCount: normalized.filter((m) => m.role === 'assistant' && m.imageUrl).length }
-              : c,
-          ),
-        );
+        mergeDrawMessages(conversationId, data.messages, { title: data.title, updatedAt: data.updatedAt });
       }
     } catch {
       setErrorText('加载画图记录失败');
@@ -173,7 +195,7 @@ export function useDrawActions({
       loadingDrawConversationIdsRef.current.delete(conversationId);
       setLoadingDrawConversationId((current) => (current === conversationId ? null : current));
     }
-  }, [setErrorText]);
+  }, [setErrorText, mergeDrawMessages]);
 
   const refreshDrawConversationMessages = useCallback(async (conversationId) => {
     if (loadingDrawConversationIdsRef.current.has(conversationId)) return;
@@ -182,14 +204,7 @@ export function useDrawActions({
     try {
       const data = await fetchDrawConversation(conversationId);
       if (Array.isArray(data.messages)) {
-        const normalized = data.messages.map((m) => normalizeMessage(m, data.updatedAt));
-        setDrawConversations((current) =>
-          current.map((c) =>
-            c.id === conversationId
-              ? { ...c, messages: normalized, messagesLoaded: true, title: data.title || c.title, updatedAt: data.updatedAt || c.updatedAt, messageCount: normalized.length, imageCount: normalized.filter((m) => m.role === 'assistant' && m.imageUrl).length }
-              : c,
-          ),
-        );
+        mergeDrawMessages(conversationId, data.messages, { title: data.title, updatedAt: data.updatedAt });
       }
     } catch {
       // 静默
@@ -197,7 +212,7 @@ export function useDrawActions({
       loadingDrawConversationIdsRef.current.delete(conversationId);
       setLoadingDrawConversationId((current) => (current === conversationId ? null : current));
     }
-  }, []);
+  }, [mergeDrawMessages]);
 
   const switchDrawConversation = useCallback((conversationId) => {
     setActiveDrawConversationId(conversationId);

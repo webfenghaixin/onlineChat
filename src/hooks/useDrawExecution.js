@@ -286,6 +286,8 @@ export function useDrawExecution({
   // 恢复 pending 任务
   useEffect(() => {
     if (authState !== 'authenticated') return undefined;
+    const PENDING_TIMEOUT_MS = 5 * 60 * 1000;
+    const now = Date.now();
     const pendingTasks = [];
     for (const conversation of drawConversations) {
       if (!conversation.messages || conversation.messages.length === 0) continue;
@@ -293,6 +295,20 @@ export function useDrawExecution({
         if (message.role === 'assistant' && message.taskId && !message.imageUrl && !message.error
           && !activeDrawTaskIdsRef.current.has(message.taskId)
           && !resumedDrawTasksRef.current.has(message.taskId)) {
+          // 超过 5 分钟的 pending 任务直接标记为超时失败，不再恢复轮询
+          if (typeof message.createdAt === 'number' && now - message.createdAt > PENDING_TIMEOUT_MS) {
+            const timeoutConversationId = conversation.id;
+            const timeoutMessageId = message.id;
+            updateDrawConversation(timeoutConversationId, (conv) => ({
+              ...conv,
+              messages: (conv.messages || []).map((m) =>
+                m.id === timeoutMessageId
+                  ? { ...m, pending: false, error: '图片生成超时（已超过 5 分钟），请重试。' }
+                  : m,
+              ),
+            }));
+            continue;
+          }
           pendingTasks.push({ conversationId: conversation.id, messageId: message.id, taskId: message.taskId, createdAt: message.createdAt });
         }
       }

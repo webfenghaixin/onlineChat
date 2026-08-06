@@ -143,11 +143,30 @@ export function useDrawActions({
   });
   const { exitDrawSelectMode } = selection;
 
-  // 云端消息合并到本地时，保留本地消息的 taskId：
-  // 部分旧数据云端未持久化 taskId，直接整体替换会导致前端无法恢复轮询，
-  // 消息即使后端已成功也一直卡在"制图中"。
+  // 客户端侧 zombie 检测：与 Vercel maxDuration=300s 对齐
+  const DRAW_PENDING_TIMEOUT_MS = 5 * 60 * 1000;
+
+  // 云端消息合并到本地时：
+  // 1. 保留本地消息的 taskId（旧数据云端未持久化 taskId）
+  // 2. pending 超过 5 分钟的 assistant 消息标记为超时失败——
+  //    无论 taskId 是否存在、Redis 任务是否过期，都能在前端兜底，
+  //    避免消息永远卡在"制图中"。
   const mergeDrawMessages = useCallback((conversationId, cloudMessages, { title, updatedAt } = {}) => {
-    const normalized = cloudMessages.map((m) => normalizeMessage(m, updatedAt));
+    const now = Date.now();
+    const normalized = cloudMessages.map((m) => {
+      const msg = normalizeMessage(m, updatedAt);
+      if (
+        msg.role === 'assistant' &&
+        msg.pending &&
+        !msg.imageUrl &&
+        !msg.error &&
+        typeof msg.createdAt === 'number' &&
+        now - msg.createdAt > DRAW_PENDING_TIMEOUT_MS
+      ) {
+        return { ...msg, pending: false, error: '图片生成超时（已超过 5 分钟），请重试。' };
+      }
+      return msg;
+    });
     setDrawConversations((current) => {
       const localMessages = current.find((c) => c.id === conversationId)?.messages || [];
       const localByMessageId = new Map(localMessages.map((m) => [m.id, m]));

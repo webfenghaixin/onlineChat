@@ -80,11 +80,12 @@ export default async function handler(req, res) {
   }
 
   // 僵尸任务检测：后台 waitUntil 任务被 Vercel 在 maxDuration 强制终止时，
-  // runTask 的 catch/finally 来不及写入 failed 状态，Redis 里会永久卡在 running。
-  // 若 running 超过 5 分钟，判定为超时失败并回写 Redis，让前端轮询能正常停止。
+  // runTask 的 catch/finally 来不及写入 failed 状态，Redis 里会永久卡在
+  // queued 或 running。若该状态超过 5 分钟，判定为超时失败并回写 Redis，
+  // 让前端轮询能正常停止。
   const now = Date.now();
   if (
-    task.status === 'running' &&
+    (task.status === 'running' || task.status === 'queued') &&
     typeof task.updatedAt === 'number' &&
     now - task.updatedAt > TASK_RUNNING_TIMEOUT_MS
   ) {

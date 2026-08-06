@@ -6,6 +6,8 @@ import {
   CHAT_IMAGE_MAX_BYTES,
   CHAT_IMAGE_MIN_QUALITY,
 } from './constants';
+import { API_BASE } from './constants';
+import { getToken } from './auth.js';
 
 function readAsDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -96,6 +98,24 @@ export async function prepareDrawReferenceImage(file) {
     },
     '参考图',
   );
+}
+
+// 将压缩后的参考图 data URL 上传到 Vercel Blob 持久化，返回 blob URL
+export async function uploadDrawReferenceImage(dataUrl) {
+  const token = getToken();
+  const response = await fetch(`${API_BASE}/api/draw-task/upload-ref`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ image: dataUrl }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.url) {
+    throw new Error(data.error || '参考图上传失败，请稍后重试。');
+  }
+  return data.url;
 }
 
 export async function prepareChatImage(file) {

@@ -113,20 +113,19 @@ export function normalizeTaskMetadata(metadata, taskId) {
 
   if (!conversationId || !userMessage?.id || !assistantMessage?.id) return null;
 
-  // 剥离 userMessage 中的大字段（参考图 base64），避免 Redis 单次请求超过 Upstash 1MB 限制。
-  // 参考图已由 task.options.referenceImages 携带，前端 retryDraw/editDrawMessage 读取的是
-  // 本地 React state 的 userMsg（含完整 referenceImages），不依赖此处的 metadata。
+  // 参考图已持久化到 Vercel Blob，userMessage 中存的是 blob URL（小体积字符串），
+  // 可安全存入 Redis，页面刷新后仍可访问。
   const slimUserMessage = {
     id: userMessage.id,
     role: userMessage.role,
     content: userMessage.content,
+    referenceImages: Array.isArray(userMessage.referenceImages) ? userMessage.referenceImages : null,
     model: userMessage.model,
     size: userMessage.size,
     quality: userMessage.quality,
     batchId: userMessage.batchId,
     imageCount: userMessage.imageCount,
     createdAt: userMessage.createdAt,
-    hasReferenceImages: Array.isArray(userMessage.referenceImages) && userMessage.referenceImages.length > 0,
   };
 
   return {
@@ -317,7 +316,7 @@ async function upsertDrawTaskRecordUnlocked(redis, username, metadata, patch = {
   });
 }
 
-export async function runTask({ redis, taskKey, task, apiKey, runtimeOptions }) {
+export async function runTask({ redis, taskKey, task, apiKey }) {
   const lockKey = resolveTaskLockKey(task);
   let lockAcquired = false;
   if (lockKey) {
@@ -334,12 +333,9 @@ export async function runTask({ redis, taskKey, task, apiKey, runtimeOptions }) 
   try {
     await setTask(redis, taskKey, runningTask);
 
-    // 优先使用 runtimeOptions（含参考图，通过闭包传递，不经过 Redis，避免超 1MB 限制）；
-    // 回退到 task.options（从 Redis 读取，参考图已被剥离）。
-    const drawOptions = runtimeOptions || task.options;
     const result = await runDrawRequest({
       apiKey,
-      options: drawOptions,
+      options: task.options,
     });
 
     const sourceImageUrl = result.imageUrl || '';
@@ -494,14 +490,12 @@ export default async function handler(req, res) {
   const metadata = normalizeTaskMetadata(body.taskMetadata, taskId);
   const taskKey = `drawTask:${auth.username}:${taskId}`;
   const now = Date.now();
-  // 参考图（base64，可能数 MB）不存入 Redis（Upstash 单次请求限 1MB），
-  // 改为通过 runTask 的 runtimeOptions 闭包传递，仅在执行画图请求时使用。
-  const { referenceImages: _stripped, ...slimOptions } = options;
+  // 参考图已持久化到 Vercel Blob，这里存的是 blob URL（小体积字符串），可安全存入 Redis。
   const task = {
     id: taskId,
     owner: auth.username,
     status: 'queued',
-    options: slimOptions,
+    options,
     metadata,
     createdAt: now,
     updatedAt: now,
@@ -509,7 +503,7 @@ export default async function handler(req, res) {
 
   await setTask(redis, taskKey, task);
   await upsertDrawTaskRecord(redis, auth.username, metadata);
-  waitUntil(runTask({ redis, taskKey, task, apiKey, runtimeOptions: options }));
+  waitUntil(runTask({ redis, taskKey, task, apiKey }));
 
   sendJson(res, 202, {
     taskId,

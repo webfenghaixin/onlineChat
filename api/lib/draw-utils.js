@@ -217,6 +217,27 @@ async function pollRightApiTask({ apiKey, taskId, signal }) {
   throw new Error('图片生成超时，请稍后重试。');
 }
 
+// 将 http(s) URL 参考图下载并转为 data URL，rightapi.ai 的 image 字段需要 data URL。
+// 已是 data URL 的直接保留。
+async function resolveReferenceImagesToDataUrls(referenceImages) {
+  if (!Array.isArray(referenceImages) || referenceImages.length === 0) return [];
+
+  return Promise.all(
+    referenceImages.filter(Boolean).map(async (url) => {
+      if (url.startsWith('data:')) return url;
+      if (!url.startsWith('http')) return url;
+
+      const imageResponse = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      if (!imageResponse.ok) {
+        throw new Error(`下载参考图失败 (${imageResponse.status})`);
+      }
+      const buffer = Buffer.from(await imageResponse.arrayBuffer());
+      const contentType = imageResponse.headers.get('content-type') || 'image/png';
+      return `data:${contentType};base64,${buffer.toString('base64')}`;
+    }),
+  );
+}
+
 export async function runDrawRequest({ apiKey, options, signal }) {
   const cleaned = cleanDrawOptions(options);
   const endpoint = resolveDrawEndpoint(cleaned.apiMode);
@@ -224,6 +245,9 @@ export async function runDrawRequest({ apiKey, options, signal }) {
     'Content-Type': 'application/json',
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+  // 参考图持久化在 Vercel Blob（http URL），rightapi.ai 需要 data URL，这里转换
+  cleaned.referenceImages = await resolveReferenceImagesToDataUrls(cleaned.referenceImages);
 
   const body = cleaned.apiMode === 'chat'
     ? buildChatBody(cleaned)

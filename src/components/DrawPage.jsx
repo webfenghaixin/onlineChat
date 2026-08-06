@@ -19,7 +19,7 @@ import {
 } from '../lib/constants';
 import ImagePreview from './ImagePreview';
 import FullscreenEditor, { FullscreenIcon } from './FullscreenEditor';
-import { prepareDrawReferenceImage } from '../lib/image-utils';
+import { prepareDrawReferenceImage, uploadDrawReferenceImage } from '../lib/image-utils';
 import ConfirmDialog from './ConfirmDialog';
 import Scrollbar from './Scrollbar';
 import BalanceBar from './BalanceBar';
@@ -160,10 +160,12 @@ export default function DrawPage({
     try {
       const results = await Promise.all(
         filesToProcess.map(async (file) => {
-          const optimizedImageUrl = await prepareDrawReferenceImage(file);
+          const compressedDataUrl = await prepareDrawReferenceImage(file);
+          // 压缩后上传到 Vercel Blob 持久化，页面刷新后参考图仍可访问
+          const blobUrl = await uploadDrawReferenceImage(compressedDataUrl);
           return {
             name: file.name || `clipboard-image-${Date.now()}`,
-            url: optimizedImageUrl,
+            url: blobUrl,
           };
         }),
       );

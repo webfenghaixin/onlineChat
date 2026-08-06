@@ -99,20 +99,19 @@ export default async function handler(req, res) {
     return;
   }
 
-  // 剥离 userMessage 中的参考图大字段（base64），避免写入会话历史时超过 Upstash 1MB 限制。
-  // 参考图已由 task.options.referenceImages 携带；前端 retryDraw/editDrawMessage 读取的是
-  // 本地 React state 的 userMsg（含完整 referenceImages），不依赖会话历史中的副本。
+  // 参考图已持久化到 Vercel Blob，userMessage 中存的是 blob URL（小体积字符串），
+  // 可安全存入 Redis 会话历史，页面刷新后仍可访问。
   const slimUserMessage = {
     id: userMessage.id,
     role: userMessage.role,
     content: userMessage.content,
+    referenceImages: Array.isArray(userMessage.referenceImages) ? userMessage.referenceImages : null,
     model: userMessage.model,
     size: userMessage.size,
     quality: userMessage.quality,
     batchId: userMessage.batchId,
     imageCount: userMessage.imageCount,
     createdAt: userMessage.createdAt,
-    hasReferenceImages: Array.isArray(userMessage.referenceImages) && userMessage.referenceImages.length > 0,
   };
 
   const baseMetadata = {
@@ -130,9 +129,8 @@ export default async function handler(req, res) {
   // 先为每个 assistantMessage 生成 taskId，再一次性写入会话记录：
   // 云端消息必须持久化 taskId，否则前端在页面切回/重新打开、本地状态被
   // 云端数据覆盖后，无法恢复轮询，会一直卡在"制图中"。
-  // 参考图（base64，可能数 MB）不存入 Redis（Upstash 单次请求限 1MB），
-  // 改为通过 runTask 的 runtimeOptions 闭包传递，仅在执行画图请求时使用。
-  const { referenceImages: _stripped, ...slimOptions } = options;
+  // 参考图已持久化到 Vercel Blob，这里存的是 blob URL（小体积字符串），
+  // 可安全存入 Redis；runDrawRequest 执行时会把 URL 转为 data URL 发给大模型。
   const taskRecords = rawAssistantMessages.map((assistantMessage) => {
     const taskId = crypto.randomUUID();
     const taskKey = `drawTask:${auth.username}:${taskId}`;
@@ -140,7 +138,7 @@ export default async function handler(req, res) {
       id: taskId,
       owner: auth.username,
       status: 'queued',
-      options: slimOptions,
+      options,
       metadata: normalizeTaskMetadata(
         {
           ...rawMetadata,
@@ -165,10 +163,9 @@ export default async function handler(req, res) {
   );
 
   // 循环创建 N 个 task 并异步执行
-  // runtimeOptions 携带完整参考图，通过闭包传递给 runTask，不经过 Redis
   for (const { task, taskKey, messageId } of taskRecords) {
     await setTask(redis, taskKey, task);
-    waitUntil(runTask({ redis, taskKey, task, apiKey, runtimeOptions: options }));
+    waitUntil(runTask({ redis, taskKey, task, apiKey }));
     tasks.push({ messageId, taskId: task.id });
   }
 

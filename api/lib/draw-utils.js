@@ -1,5 +1,11 @@
 const DRAW_BASE = 'https://www.rightapi.ai/draw';
+const RIGHTAPI_BASE = 'https://www.rightapi.ai';
 export const ALLOWED_DRAW_PATHS = ['/v1/images/generations', '/v1/chat/completions'];
+
+// rightapi.ai 异步任务轮询参数
+const RIGHTAPI_TASK_POLL_INTERVAL_MS = 3000;
+// 留 20 秒缓冲给 Vercel maxDuration=300s，避免函数被强制终止
+const RIGHTAPI_TASK_MAX_WAIT_MS = 280000;
 
 export function resolveDrawPath(apiMode) {
   return apiMode === 'chat' ? '/v1/chat/completions' : '/v1/images/generations';
@@ -17,7 +23,7 @@ export function cleanDrawOptions(options = {}) {
   const referenceImages = rawRefImages
     .filter((url) => typeof url === 'string' && url.trim())
     .map((url) => url.trim())
-    .slice(0, 3);
+    .slice(0, 7);
 
   return {
     apiMode: options.apiMode === 'chat' ? 'chat' : 'images',
@@ -162,6 +168,56 @@ export function normalizeDrawErrorMessage(rawText, status, apiModeLabel = '当�
   return `${apiModeLabel} 没有返回可用图片，请稍后重试。`;
 }
 
+// 轮询 rightapi.ai 异步任务，直到完成或超时
+async function pollRightApiTask({ apiKey, taskId, signal }) {
+  const url = `${RIGHTAPI_BASE}/v1/tasks/${encodeURIComponent(taskId)}`;
+  const headers = {};
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+  const deadline = Date.now() + RIGHTAPI_TASK_MAX_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error('请求已取消');
+
+    let response;
+    try {
+      response = await fetch(url, { method: 'GET', headers });
+    } catch {
+      // 网络错误，等待后重试
+      await new Promise((resolve) => setTimeout(resolve, RIGHTAPI_TASK_POLL_INTERVAL_MS));
+      continue;
+    }
+
+    if (!response.ok) {
+      if (response.status >= 500) {
+        await new Promise((resolve) => setTimeout(resolve, RIGHTAPI_TASK_POLL_INTERVAL_MS));
+        continue;
+      }
+      const errorText = await response.text().catch(() => '任务查询失败');
+      throw new Error(normalizeDrawErrorMessage(errorText, response.status));
+    }
+
+    const data = await response.json();
+
+    // 完成状态：直接取图片 URL（兼容 Images 和 Gemini 两种响应格式）
+    const imageUrl = extractImageUrlFromPayload(data);
+    if (imageUrl) {
+      return { imageUrl };
+    }
+
+    // 失败状态
+    if (data.status === 'failed') {
+      const rawError = (data.error && (data.error.message || data.error)) || '图片生成失败';
+      const errorMsg = typeof rawError === 'string' ? rawError : '图片生成失败';
+      throw new Error(normalizeDrawErrorMessage(errorMsg, 200));
+    }
+
+    // queued / in_progress / processing：继续轮询
+    await new Promise((resolve) => setTimeout(resolve, RIGHTAPI_TASK_POLL_INTERVAL_MS));
+  }
+
+  throw new Error('图片生成超时，请稍后重试。');
+}
+
 export async function runDrawRequest({ apiKey, options, signal }) {
   const cleaned = cleanDrawOptions(options);
   const endpoint = resolveDrawEndpoint(cleaned.apiMode);
@@ -188,10 +244,25 @@ export async function runDrawRequest({ apiKey, options, signal }) {
 
   if (cleaned.apiMode === 'images') {
     const data = await response.json();
+
+    // 同步模式：响应直接包含图片 URL（向后兼容）
     const imageUrl = extractImageUrlFromPayload(data);
     if (imageUrl) {
       return { imageUrl };
     }
+
+    // 异步模式：响应包含 task_id，需轮询 /v1/tasks/{task_id} 获取结果
+    if (data.task_id) {
+      return pollRightApiTask({ apiKey, taskId: data.task_id, signal });
+    }
+
+    // 既没有图片 URL 也没有 task_id，检查是否失败
+    if (data.status === 'failed') {
+      const rawError = (data.error && (data.error.message || data.error)) || '图片生成失败';
+      const errorMsg = typeof rawError === 'string' ? rawError : '图片生成失败';
+      throw new Error(normalizeDrawErrorMessage(errorMsg, 200));
+    }
+
     throw new Error(createNoImageMessage(JSON.stringify(data).slice(0, 500), 'Images API'));
   }
 
@@ -211,6 +282,7 @@ function buildImagesBody(options) {
     image: images.length > 0 ? images : undefined,
     size: options.size,
     quality: options.quality,
+    async: true,
     response_format: 'url',
   };
 }

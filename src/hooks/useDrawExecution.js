@@ -74,7 +74,6 @@ export function useDrawExecution({
     const batchId = createId();
     const userMessage = {
       id: createId(), role: 'user', content: prompt,
-      referenceImage: referenceImages[0] || null,
       referenceImages: referenceImages.length > 0 ? referenceImages : null,
       model, size, quality, batchId, imageCount: requestedCount, createdAt: now,
     };

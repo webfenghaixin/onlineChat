@@ -29,7 +29,6 @@ export function cleanDrawOptions(options = {}) {
     apiMode: options.apiMode === 'chat' ? 'chat' : 'images',
     source: options.source === 'luxee' ? 'luxee' : 'rightcode',
     prompt: String(options.prompt || '').trim(),
-    referenceImage: referenceImages[0] || '',
     referenceImages,
     size: options.size || '1024x1024',
     quality: options.quality || 'medium',

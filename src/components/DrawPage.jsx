@@ -68,6 +68,7 @@ export default function DrawPage({
   selectAllDrawAssistantMessages,
   deleteSelectedDrawMessages,
   drawFileInputRef,
+  drawRefUploadsRef,
   authState,
   balance,
   onRecharge,
@@ -123,8 +124,15 @@ export default function DrawPage({
   const composerPanelRef = useRef(null);
 
   const removeDrawPendingImage = useCallback((index) => {
-    setDrawPendingImages((prev) => (prev || []).filter((_, itemIndex) => itemIndex !== index));
-  }, [setDrawPendingImages]);
+    setDrawPendingImages((prev) => {
+      const target = (prev || [])[index];
+      if (target) {
+        const key = target.localUrl || target.url;
+        drawRefUploadsRef?.current?.delete(key);
+      }
+      return (prev || []).filter((_, itemIndex) => itemIndex !== index);
+    });
+  }, [setDrawPendingImages, drawRefUploadsRef]);
 
   const processDrawReferenceFiles = useCallback(async (files) => {
     if (drawImageProcessingRef.current) {
@@ -158,25 +166,64 @@ export default function DrawPage({
     drawImageProcessingRef.current = true;
     setDrawImageProcessing(true);
     try {
-      const results = await Promise.all(
+      // 1. 先本地压缩，拿到 data URL（本地缓存，立即显示，不依赖上传）
+      const prepared = await Promise.all(
         filesToProcess.map(async (file) => {
-          const compressedDataUrl = await prepareDrawReferenceImage(file);
-          // 压缩后上传到 Vercel Blob 持久化，页面刷新后参考图仍可访问
-          const blobUrl = await uploadDrawReferenceImage(compressedDataUrl);
+          const localUrl = await prepareDrawReferenceImage(file);
           return {
             name: file.name || `clipboard-image-${Date.now()}`,
-            url: blobUrl,
+            localUrl,
           };
         }),
       );
-      setDrawPendingImages((prev) => [...(prev || []), ...results]);
+
+      // 2. 立即加入 pendingImages，用本地 data URL 渲染，用户马上能看到
+      const newItems = prepared.map((p) => ({
+        name: p.name,
+        url: p.localUrl,
+        localUrl: p.localUrl,
+        uploadState: 'uploading',
+      }));
+      setDrawPendingImages((prev) => [...(prev || []), ...newItems]);
+
+      // 3. 后台异步上传到 Vercel Blob 持久化，成功后把 url 更新为 blobUrl；
+      //    上传失败标记 failed（仍保留本地 data URL 用于回退，但发送时会被拦截）
+      for (const item of newItems) {
+        const promise = uploadDrawReferenceImage(item.localUrl)
+          .then((blobUrl) => {
+            setDrawPendingImages((prev) => prev.map((im) =>
+              im.localUrl === item.localUrl ? { ...im, url: blobUrl, uploadState: 'done' } : im,
+            ));
+            const record = drawRefUploadsRef?.current?.get(item.localUrl);
+            if (record) {
+              record.status = 'done';
+              record.url = blobUrl;
+            }
+            return blobUrl;
+          })
+          .catch((error) => {
+            setDrawPendingImages((prev) => prev.map((im) =>
+              im.localUrl === item.localUrl ? { ...im, uploadState: 'failed' } : im,
+            ));
+            const record = drawRefUploadsRef?.current?.get(item.localUrl);
+            if (record) record.status = 'failed';
+            console.warn('参考图上传失败，已保留本地缓存：', error);
+            return null;
+          });
+        // 记录保留在 ref 中直到发送完成或删除图片，供 handleDraw 读取最终状态
+        drawRefUploadsRef?.current?.set(item.localUrl, {
+          status: 'uploading',
+          url: item.localUrl,
+          promise,
+        });
+      }
     } catch (error) {
       setErrorText(error.message || '参考图处理失败');
     } finally {
       drawImageProcessingRef.current = false;
       setDrawImageProcessing(false);
     }
-  }, [drawPendingImages, setDrawPendingImages, setErrorText]);
+  }, [drawPendingImages, setDrawPendingImages, setErrorText, drawRefUploadsRef]);
 
   const handleDrawFileChange = useCallback((event) => {
     const files = Array.from(event.target.files || []);

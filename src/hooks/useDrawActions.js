@@ -36,6 +36,10 @@ export function useDrawActions({
   const loadingDrawConversationIdsRef = useRef(new Set());
   const drawConversationsRef = useRef(drawConversations);
   const activeDrawConversationIdRef = useRef(activeDrawConversationId);
+  // 参考图上传状态追踪：localUrl -> { status: 'uploading'|'done'|'failed', url, promise }
+  // 选图后先用本地 data URL 即时显示，后台异步上传到 Vercel Blob 持久化；
+  // 发送前 await 所有进行中的上传，确保发给模型的是持久化 URL。
+  const drawRefUploadsRef = useRef(new Map());
 
   drawConversationsRef.current = drawConversations;
   activeDrawConversationIdRef.current = activeDrawConversationId;
@@ -317,6 +321,7 @@ export function useDrawActions({
     activeDrawConversationId, activeDrawConversationIdRef,
     activeDrawConversation, drawConvLoading,
     drawPrompt, drawPendingImages, drawImageCount,
+    drawRefUploadsRef,
     updateDrawConversation, enforceDrawLimit,
     refreshDrawConversationMessages,
     setErrorText, setStatusText, setRechargeDialogOpen, setBalance,
@@ -331,7 +336,7 @@ export function useDrawActions({
     drawPendingImages, setDrawPendingImages,
     deleteDrawConversationTarget, setDeleteDrawConversationTarget,
     loadingDrawConversationId,
-    drawFileInputRef, drawConversationsRef,
+    drawFileInputRef, drawConversationsRef, drawRefUploadsRef,
     activeDrawConversation, activeDrawMessages, drawConvLoading,
     pendingDrawTaskCount, isGenerating, drawImageCount,
     updateDrawConversation, loadDrawConversationMessages, refreshDrawConversationMessages,

@@ -24,6 +24,7 @@ export function useDrawExecution({
   drawPrompt,
   drawPendingImages,
   drawImageCount,
+  drawRefUploadsRef,
   updateDrawConversation,
   enforceDrawLimit,
   refreshDrawConversationMessages,
@@ -88,6 +89,7 @@ export function useDrawExecution({
     }));
     setDrawPrompt('');
     setDrawPendingImages([]);
+    drawRefUploadsRef?.current?.clear();
     const activeConv = drawConversationsRef.current.find((c) => c.id === targetConvId);
     const batchController = new AbortController();
     const taskIdToMessageId = new Map();
@@ -190,7 +192,35 @@ export function useDrawExecution({
   const handleDraw = useCallback(async () => {
     const prompt = drawPrompt.trim();
     if (!prompt || drawSubmissionRef.current || drawConvLoading || !activeDrawConversation?.messagesLoaded || authState !== 'authenticated') return;
-    const referenceImages = drawPendingImages.map((img) => img.url).filter(Boolean);
+
+    // 等待所有参考图异步上传完成，确保发给模型的是持久化 URL（blobUrl），
+    // 避免 data URL 存入 Redis 时超过 Upstash 1MB 限制。
+    const pendingUploads = Array.from(drawRefUploadsRef?.current?.values() || [])
+      .filter((upload) => upload.status === 'uploading')
+      .map((upload) => upload.promise);
+    if (pendingUploads.length > 0) {
+      setStatusText(`正在上传参考图 ${pendingUploads.length} 张...`);
+      await Promise.all(pendingUploads);
+    }
+
+    // 从上传状态映射出最终可用 URL；上传失败/未完成的图不发送
+    const referenceImages = drawPendingImages
+      .map((img) => {
+        const key = img.localUrl || img.url;
+        const upload = drawRefUploadsRef?.current?.get(key);
+        return upload ? upload.url : img.url;
+      })
+      .filter(Boolean);
+    const failedRefCount = drawPendingImages.filter((img) => {
+      const key = img.localUrl || img.url;
+      const upload = drawRefUploadsRef?.current?.get(key);
+      return upload?.status === 'failed';
+    }).length;
+    if (failedRefCount > 0) {
+      setErrorText(`${failedRefCount} 张参考图上传失败，请重新添加后再生成。`);
+      return;
+    }
+
     const imageCount = Math.min(DRAW_MAX_BATCH_COUNT, Math.max(DRAW_MIN_BATCH_COUNT, Number(settings.drawImageCount) || 1));
     await _executeDraw({
       prompt, referenceImages,
@@ -200,7 +230,7 @@ export function useDrawExecution({
       quality: settings.drawQuality || 'medium',
       imageCount,
     });
-  }, [drawPrompt, drawConvLoading, activeDrawConversation, authState, drawPendingImages, settings, activeDrawConversationId, _executeDraw]);
+  }, [drawPrompt, drawConvLoading, activeDrawConversation, authState, drawPendingImages, settings, activeDrawConversationId, _executeDraw, setStatusText, setErrorText]);
 
   const retryDraw = useCallback(async (userMessageId) => {
     const conv = drawConversationsRef.current.find((c) => c.id === activeDrawConversationId);

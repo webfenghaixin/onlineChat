@@ -45,27 +45,56 @@ export default function FullscreenEditor({
     document.body.style.overflow = 'hidden';
     textareaRef.current?.focus();
 
-    // 移动端键盘弹出会压缩 visual viewport 但不改变 layout viewport，
-    // fixed 定位的 overlay 底部会被键盘遮挡。监听 visualViewport 动态调整
-    // overlay 高度/偏移，让 footer 始终位于键盘上方。
     const viewport = window.visualViewport;
     const rootElement = document.documentElement;
-    let cleanupViewport = () => {};
+    let rafId = 0;
+    let lastKeyboardHeight = -1;
+    let stableTimer = null;
+
+    const scrollTextareaToCursor = () => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      requestAnimationFrame(() => {
+        ta.scrollTop = ta.scrollHeight;
+      });
+    };
+
+    const applyViewport = () => {
+      const layoutHeight = document.documentElement.clientHeight || window.innerHeight || 0;
+      const visualHeight = viewport ? viewport.height : window.innerHeight;
+      const keyboardHeight = Math.max(0, Math.round(layoutHeight - visualHeight));
+
+      if (keyboardHeight !== lastKeyboardHeight) {
+        lastKeyboardHeight = keyboardHeight;
+        rootElement.style.setProperty('--fse-kb-h', `${keyboardHeight}px`);
+        scrollTextareaToCursor();
+      }
+    };
+
+    const scheduleApply = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        applyViewport();
+      });
+    };
+
+    const handleViewportStable = () => {
+      if (stableTimer) clearTimeout(stableTimer);
+      stableTimer = setTimeout(() => {
+        applyViewport();
+        scrollTextareaToCursor();
+      }, 150);
+    };
+
     if (viewport && rootElement) {
-      const applyViewport = () => {
-        rootElement.style.setProperty('--fse-vh', `${viewport.height}px`);
-        rootElement.style.setProperty('--fse-vtop', `${viewport.offsetTop}px`);
-      };
-      viewport.addEventListener('resize', applyViewport);
-      viewport.addEventListener('scroll', applyViewport);
+      viewport.addEventListener('resize', scheduleApply);
+      viewport.addEventListener('scroll', scheduleApply);
+      viewport.addEventListener('resize', handleViewportStable);
       applyViewport();
-      cleanupViewport = () => {
-        viewport.removeEventListener('resize', applyViewport);
-        viewport.removeEventListener('scroll', applyViewport);
-        rootElement.style.removeProperty('--fse-vh');
-        rootElement.style.removeProperty('--fse-vtop');
-      };
     }
+
+    window.addEventListener('resize', scheduleApply);
 
     const handleKeyDown = (event) => {
       if (document.querySelector('.image-preview-lightbox')) return;
@@ -82,7 +111,15 @@ export default function FullscreenEditor({
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      cleanupViewport();
+      if (viewport) {
+        viewport.removeEventListener('resize', scheduleApply);
+        viewport.removeEventListener('scroll', scheduleApply);
+        viewport.removeEventListener('resize', handleViewportStable);
+      }
+      window.removeEventListener('resize', scheduleApply);
+      if (rafId) cancelAnimationFrame(rafId);
+      if (stableTimer) clearTimeout(stableTimer);
+      rootElement.style.removeProperty('--fse-kb-h');
       document.body.style.overflow = previousOverflow;
     };
   }, []);

@@ -4615,14 +4615,7 @@ select {
 
 .fullscreen-editor-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  /* 键盘弹出时由 FullscreenEditor 通过 --fse-vh 动态缩小到可视区高度 */
-  height: 100vh;
-  height: var(--fse-vh, 100dvh);
-  /* iOS 键盘弹出可能滚动页面，用 offsetTop 校准位置 */
-  transform: translateY(var(--fse-vtop, 0px));
+  inset: 0;
   z-index: 10020;
   display: grid;
   place-items: center;
@@ -4636,6 +4629,9 @@ select {
   width: min(920px, 100%);
   min-width: 0;
   height: min(860px, calc(100dvh - 36px));
+  /* 键盘弹出时由 FullscreenEditor 设置 --fse-kb-h = 键盘高度，
+     底部留出等高的下边距，footer 和输入内容不被键盘遮挡 */
+  padding-bottom: var(--fse-kb-h, 0px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -4645,6 +4641,7 @@ select {
     radial-gradient(circle, rgba(220, 180, 80, 0.09) 1.2px, transparent 1.2px) 0 0 / 24px 24px,
     rgb(249, 242, 220);
   box-shadow: 0 22px 60px rgba(61, 52, 40, 0.28);
+  transition: padding-bottom 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .fullscreen-editor-header {
@@ -4766,9 +4763,9 @@ select {
 
 .fullscreen-editor-textarea {
   flex: 1 1 auto;
+  min-height: 0;
   display: block;
   width: 100%;
-  min-height: 0;
   overflow-y: auto;
   padding: 24px;
   resize: none;
@@ -4779,6 +4776,8 @@ select {
   font: inherit;
   font-size: clamp(17px, 2vw, 22px);
   line-height: 1.8;
+  will-change: scroll-position;
+  -webkit-overflow-scrolling: touch;
 }
 
 .fullscreen-editor-textarea::placeholder {
@@ -5018,6 +5017,9 @@ select {
     max-height: none;
     border: 0;
     border-radius: 0;
+    /* 移动端同时考虑键盘高度和底部安全区 */
+    padding-bottom: calc(var(--fse-kb-h, 0px) + env(safe-area-inset-bottom));
+    transition: padding-bottom 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   .fullscreen-editor-header {
@@ -5039,7 +5041,7 @@ select {
   }
 
   .fullscreen-editor-footer {
-    padding: 10px 16px max(12px, env(safe-area-inset-bottom));
+    padding: 10px 16px 12px;
   }
 
   .fullscreen-editor-button {

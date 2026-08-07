@@ -72,11 +72,14 @@ export default async function handler(req, res) {
     return;
   }
 
+  // username 可能含 @ . 等特殊字符，转成安全路径片段
+  const safeUser = String(auth.username || 'u').replace(/[^a-zA-Z0-9_-]/g, '_');
+
   try {
     const { put } = await import('@vercel/blob');
     const id = crypto.randomUUID();
     const ext = getExt(parsed.contentType);
-    const blob = await put(`draw-ref/${auth.username}/${id}.${ext}`, parsed.buffer, {
+    const blob = await put(`draw-ref/${safeUser}/${id}.${ext}`, parsed.buffer, {
       access: 'public',
       contentType: parsed.contentType,
       token,
@@ -84,6 +87,7 @@ export default async function handler(req, res) {
     });
     sendJson(res, 200, { url: blob.url });
   } catch (error) {
+    console.error('参考图上传到 Vercel Blob 失败:', error);
     sendJson(res, 500, { error: '参考图上传失败，请稍后重试。' });
-  });
+  }
 }

@@ -45,6 +45,28 @@ export default function FullscreenEditor({
     document.body.style.overflow = 'hidden';
     textareaRef.current?.focus();
 
+    // 移动端键盘弹出会压缩 visual viewport 但不改变 layout viewport，
+    // fixed 定位的 overlay 底部会被键盘遮挡。监听 visualViewport 动态调整
+    // overlay 高度/偏移，让 footer 始终位于键盘上方。
+    const viewport = window.visualViewport;
+    const rootElement = document.documentElement;
+    let cleanupViewport = () => {};
+    if (viewport && rootElement) {
+      const applyViewport = () => {
+        rootElement.style.setProperty('--fse-vh', `${viewport.height}px`);
+        rootElement.style.setProperty('--fse-vtop', `${viewport.offsetTop}px`);
+      };
+      viewport.addEventListener('resize', applyViewport);
+      viewport.addEventListener('scroll', applyViewport);
+      applyViewport();
+      cleanupViewport = () => {
+        viewport.removeEventListener('resize', applyViewport);
+        viewport.removeEventListener('scroll', applyViewport);
+        rootElement.style.removeProperty('--fse-vh');
+        rootElement.style.removeProperty('--fse-vtop');
+      };
+    }
+
     const handleKeyDown = (event) => {
       if (document.querySelector('.image-preview-lightbox')) return;
 
@@ -60,6 +82,7 @@ export default function FullscreenEditor({
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
+      cleanupViewport();
       document.body.style.overflow = previousOverflow;
     };
   }, []);

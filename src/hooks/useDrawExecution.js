@@ -199,31 +199,29 @@ export function useDrawExecution({
     const prompt = drawPrompt.trim();
     if (!prompt || drawSubmissionRef.current || drawConvLoading || !activeDrawConversation?.messagesLoaded || authState !== 'authenticated') return;
 
-    // 等待所有参考图异步上传完成，确保发给模型的是持久化 URL（blobUrl），
-    // 避免 data URL 存入 Redis 时超过 Upstash 1MB 限制。
-    const pendingUploads = Array.from(drawRefUploadsRef?.current?.values() || [])
-      .filter((upload) => upload.status === 'uploading')
-      .map((upload) => upload.promise);
-    if (pendingUploads.length > 0) {
-      setStatusText(`正在上传参考图 ${pendingUploads.length} 张...`);
-      await Promise.all(pendingUploads);
+    // 参考图压缩后直接用 base64 data URL。仍在压缩中的图需 await 完成后从 ref 读取最终 data URL。
+    const processingPromises = drawPendingImages
+      .filter((img) => img.uploadState === 'processing')
+      .map((img) => drawRefUploadsRef?.current?.get(img.localUrl)?.promise)
+      .filter(Boolean);
+    if (processingPromises.length > 0) {
+      setStatusText(`正在处理参考图 ${processingPromises.length} 张...`);
+      await Promise.all(processingPromises);
     }
 
-    // 从上传状态映射出最终可用 URL；上传失败的图阻断发送并提示用户重新添加
+    // 从 ref 读取最终 data URL（绕过闭包旧值），跳过失败项
     const referenceImages = drawPendingImages
       .map((img) => {
-        const key = img.localUrl || img.url;
-        const upload = drawRefUploadsRef?.current?.get(key);
-        return upload ? upload.url : img.url;
+        const record = drawRefUploadsRef?.current?.get(img.localUrl);
+        if (record?.status === 'failed') return null;
+        // 优先取 ref 中压缩完成的 data URL，回退到 img.url（已 done 时已是 data URL）
+        return record?.url || (img.url && img.url.startsWith('data:') ? img.url : null);
       })
       .filter(Boolean);
-    const failedRefCount = drawPendingImages.filter((img) => {
-      const key = img.localUrl || img.url;
-      return drawRefUploadsRef?.current?.get(key)?.status === 'failed';
-    }).length;
+    const failedRefCount = drawPendingImages.filter((img) =>
+      drawRefUploadsRef?.current?.get(img.localUrl)?.status === 'failed').length;
     if (failedRefCount > 0) {
-      setErrorText(`${failedRefCount} 张参考图上传失败，请移除后重新添加再生成。`);
-      return;
+      setErrorText(`${failedRefCount} 张参考图处理失败已跳过，将使用其余参考图生成。`);
     }
 
     const imageCount = Math.min(DRAW_MAX_BATCH_COUNT, Math.max(DRAW_MIN_BATCH_COUNT, Number(settings.drawImageCount) || 1));
@@ -235,7 +233,7 @@ export function useDrawExecution({
       quality: settings.drawQuality || 'medium',
       imageCount,
     });
-  }, [drawPrompt, drawConvLoading, activeDrawConversation, authState, drawPendingImages, settings, activeDrawConversationId, _executeDraw, setStatusText, setErrorText]);
+  }, [drawPrompt, drawConvLoading, activeDrawConversation, authState, drawPendingImages, settings, activeDrawConversationId, _executeDraw, drawRefUploadsRef, setStatusText, setErrorText]);
 
   const retryDraw = useCallback(async (userMessageId) => {
     const conv = drawConversationsRef.current.find((c) => c.id === activeDrawConversationId);

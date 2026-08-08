@@ -19,7 +19,7 @@ import {
 } from '../lib/constants';
 import ImagePreview from './ImagePreview';
 import FullscreenEditor, { FullscreenIcon } from './FullscreenEditor';
-import { prepareDrawReferenceImage, uploadDrawReferenceImage } from '../lib/image-utils';
+import { prepareDrawReferenceImage } from '../lib/image-utils';
 import ConfirmDialog from './ConfirmDialog';
 import Scrollbar from './Scrollbar';
 import BalanceBar from './BalanceBar';
@@ -125,18 +125,16 @@ export default function DrawPage({
     setDrawPendingImages((prev) => {
       const target = (prev || [])[index];
       if (target) {
-        const key = target.localUrl || target.url;
-        drawRefUploadsRef?.current?.delete(key);
-        // 释放本地 object URL，避免内存泄漏（已上传成功的 url 已是 http blobUrl，不会被误释放）
+        // 释放临时 object URL（压缩完成后 localUrl 已是 data URL，不会被误释放）
         if (target.localUrl && target.localUrl.startsWith('blob:')) {
           URL.revokeObjectURL(target.localUrl);
         }
       }
       return (prev || []).filter((_, itemIndex) => itemIndex !== index);
     });
-  }, [setDrawPendingImages, drawRefUploadsRef]);
+  }, [setDrawPendingImages]);
 
-  const processDrawReferenceFiles = useCallback((files) => {
+  const processDrawReferenceFiles = useCallback(async (files) => {
     const normalizedFiles = Array.from(files || []);
     if (normalizedFiles.length === 0) return;
 
@@ -160,50 +158,42 @@ export default function DrawPage({
       setErrorText('');
     }
 
-    // 无感上传策略：
-    // 1. 选图后立即用 object URL 本地缓存并显示，不阻塞 UI（按钮不禁用，可连续添加/输入/切换）；
-    // 2. 每张图独立后台执行：压缩 → 上传 → 把 url 更新为持久化 blobUrl → 释放本地 object URL；
-    //    上传在选图时就开始，用户输入提示词期间通常已完成，发送时无需等待。
+    // 参考图不再上传后台，压缩后直接用 base64 data URL：
+    // 1. 先用 object URL 占位立即显示，不阻塞 UI；
+    // 2. 后台压缩为 data URL，完成后替换 url 并释放 object URL；
+    // 3. 发送时从 drawRefUploadsRef 读最终 data URL（绕过闭包），await 压缩 promise。
     for (const file of filesToProcess) {
-      const localUrl = URL.createObjectURL(file);
+      const objectUrl = URL.createObjectURL(file);
       const item = {
         name: file.name || `clipboard-image-${Date.now()}`,
-        url: localUrl,
-        localUrl,
-        uploadState: 'uploading',
+        url: objectUrl,
+        localUrl: objectUrl,
+        uploadState: 'processing',
       };
       setDrawPendingImages((prev) => [...(prev || []), item]);
 
-      const promise = (async () => {
-        // 后台压缩为 data URL 再上传到 Vercel Blob
-        const compressedDataUrl = await prepareDrawReferenceImage(file);
-        const blobUrl = await uploadDrawReferenceImage(compressedDataUrl);
-        setDrawPendingImages((prev) => prev.map((im) =>
-          im.localUrl === localUrl ? { ...im, url: blobUrl, uploadState: 'done' } : im,
-        ));
-        const record = drawRefUploadsRef?.current?.get(localUrl);
-        if (record) {
-          record.status = 'done';
-          record.url = blobUrl;
-        }
-        // 延迟释放本地 object URL，确保 React 已完成重渲染（img.src 已切换为 http blobUrl）
-        setTimeout(() => URL.revokeObjectURL(localUrl), 2000);
-        return blobUrl;
-      })().catch((error) => {
-        setDrawPendingImages((prev) => prev.map((im) =>
-          im.localUrl === localUrl ? { ...im, uploadState: 'failed' } : im,
-        ));
-        const record = drawRefUploadsRef?.current?.get(localUrl);
-        if (record) record.status = 'failed';
-        console.warn('参考图上传失败，已保留本地缓存：', error);
-        return null;
-      });
+      const promise = prepareDrawReferenceImage(file)
+        .then((dataUrl) => {
+          setDrawPendingImages((prev) => prev.map((im) =>
+            im.localUrl === objectUrl ? { ...im, url: dataUrl, uploadState: 'done' } : im,
+          ));
+          const record = drawRefUploadsRef?.current?.get(objectUrl);
+          if (record) { record.status = 'done'; record.url = dataUrl; }
+          URL.revokeObjectURL(objectUrl);
+          return dataUrl;
+        })
+        .catch((error) => {
+          setDrawPendingImages((prev) => prev.map((im) =>
+            im.localUrl === objectUrl ? { ...im, uploadState: 'failed' } : im,
+          ));
+          const record = drawRefUploadsRef?.current?.get(objectUrl);
+          if (record) record.status = 'failed';
+          URL.revokeObjectURL(objectUrl);
+          setErrorText(error.message || '参考图处理失败');
+          return null;
+        });
 
-      drawRefUploadsRef?.current?.set(localUrl, {
-        status: 'uploading',
-        url: localUrl,
-        promise,
-      });
+      drawRefUploadsRef?.current?.set(objectUrl, { status: 'processing', url: null, promise });
     }
   }, [drawPendingImages, setDrawPendingImages, setErrorText, drawRefUploadsRef]);
 
@@ -728,7 +718,18 @@ export default function DrawPage({
                           const refImgs = Array.isArray(msg.referenceImages) && msg.referenceImages.length > 0
                             ? msg.referenceImages
                             : msg.referenceImage ? [msg.referenceImage] : [];
-                          if (refImgs.length === 0) return null;
+                          if (refImgs.length === 0) {
+                            // 历史消息参考图 data URL 未持久化，只存了数量，显示占位
+                            const histCount = Number(msg.referenceImageCount) || 0;
+                            if (histCount > 0) {
+                              return (
+                                <div className="draw-ref-images draw-ref-images-placeholder">
+                                  <span className="draw-ref-placeholder">参考图 {histCount} 张</span>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }
                           return (
                             <div className="draw-ref-images">
                               {refImgs.map((url, i) => (
@@ -755,7 +756,7 @@ export default function DrawPage({
                           {(() => {
                             const refCount = Array.isArray(msg.referenceImages) && msg.referenceImages.length > 0
                               ? msg.referenceImages.length
-                              : msg.referenceImage ? 1 : 0;
+                              : msg.referenceImage ? 1 : (Number(msg.referenceImageCount) || 0);
                             return refCount > 0 ? ` · 图生图${refCount > 1 ? `(${refCount}张)` : ''}` : '';
                           })()}
                         </span>
@@ -1016,8 +1017,8 @@ export default function DrawPage({
                         alt={`参考图 ${index + 1}`}
                         onClick={() => openPreview(drawPendingImages.map((i) => i.url), index)}
                       />
-                      {img.uploadState === 'uploading' && (
-                        <span className="pending-image-badge">上传中</span>
+                      {img.uploadState === 'processing' && (
+                        <span className="pending-image-badge">处理中</span>
                       )}
                       {img.uploadState === 'failed' && (
                         <span className="pending-image-badge pending-image-badge-failed">失败</span>

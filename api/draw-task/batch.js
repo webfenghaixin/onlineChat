@@ -99,13 +99,15 @@ export default async function handler(req, res) {
     return;
   }
 
-  // 参考图已持久化到 Vercel Blob，userMessage 中存的是 blob URL（小体积字符串），
-  // 可安全存入 Redis 会话历史，页面刷新后仍可访问。
+  // 参考图改为 base64 data URL 直传，体积大，不能存入 Redis 会话历史（Upstash 1MB 限制）。
+  // conversation 只存数量占位，task.options 保留 data URL 供 runDrawRequest 发给模型。
+  const refCount = Array.isArray(userMessage.referenceImages) ? userMessage.referenceImages.length : 0;
   const slimUserMessage = {
     id: userMessage.id,
     role: userMessage.role,
     content: userMessage.content,
-    referenceImages: Array.isArray(userMessage.referenceImages) ? userMessage.referenceImages : null,
+    referenceImages: null,
+    referenceImageCount: refCount,
     model: userMessage.model,
     size: userMessage.size,
     quality: userMessage.quality,

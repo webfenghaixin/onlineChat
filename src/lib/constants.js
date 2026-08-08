@@ -13,8 +13,9 @@ export const STORAGE_KEY = 'online-chat-h5-state-v7';
 export const VITE_INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
 export const MAX_COMPOSER_HEIGHT = 140;
 export const DRAW_REFERENCE_MAX_DIMENSION = 1280;
-// 7 张参考图 × 0.4MB × 1.33(base64) ≈ 3.7MB，加 payload 控制在 4.5MB 以内
-export const DRAW_REFERENCE_MAX_BYTES = 0.4 * 1024 * 1024;
+// base64 data URL 直传后端存入 Redis task（临时 24h），需控制总体积 < 1MB。
+// 单张 0.1MB → base64 ≈ 0.13MB，7 张 ≈ 0.93MB，留余量给 task 其他字段。
+export const DRAW_REFERENCE_MAX_BYTES = 0.1 * 1024 * 1024;
 export const DRAW_REFERENCE_MIN_QUALITY = 0.5;
 export const DRAW_MAX_REFERENCE_IMAGES = 7;
 export const DRAW_MIN_BATCH_COUNT = 1;

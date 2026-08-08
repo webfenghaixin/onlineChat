@@ -88,6 +88,12 @@ export function useDrawExecution({
       messages: [...(conv.messages || []), userMessage, ...assistantMessages],
     }));
     setDrawPrompt('');
+    // 释放仍在上传中/失败的本地 object URL，避免内存泄漏（已成功的 url 已是 http blobUrl，不会被误释放）
+    for (const record of (drawRefUploadsRef?.current?.values() || [])) {
+      if (typeof record?.url === 'string' && record.url.startsWith('blob:')) {
+        URL.revokeObjectURL(record.url);
+      }
+    }
     setDrawPendingImages([]);
     drawRefUploadsRef?.current?.clear();
     const activeConv = drawConversationsRef.current.find((c) => c.id === targetConvId);
@@ -203,22 +209,21 @@ export function useDrawExecution({
       await Promise.all(pendingUploads);
     }
 
-    // 从上传状态映射出最终可用 URL；上传失败/未完成的图不发送
+    // 从上传状态映射出最终可用 URL；上传失败的图跳过（不阻断生成，用其余成功图）
+    const failedRefCount = drawPendingImages.filter((img) => {
+      const key = img.localUrl || img.url;
+      return drawRefUploadsRef?.current?.get(key)?.status === 'failed';
+    }).length;
     const referenceImages = drawPendingImages
       .map((img) => {
         const key = img.localUrl || img.url;
         const upload = drawRefUploadsRef?.current?.get(key);
+        if (upload?.status === 'failed') return null;
         return upload ? upload.url : img.url;
       })
       .filter(Boolean);
-    const failedRefCount = drawPendingImages.filter((img) => {
-      const key = img.localUrl || img.url;
-      const upload = drawRefUploadsRef?.current?.get(key);
-      return upload?.status === 'failed';
-    }).length;
     if (failedRefCount > 0) {
-      setErrorText(`${failedRefCount} 张参考图上传失败，请重新添加后再生成。`);
-      return;
+      setErrorText(`${failedRefCount} 张参考图上传失败已跳过，将使用其余参考图生成。`);
     }
 
     const imageCount = Math.min(DRAW_MAX_BATCH_COUNT, Math.max(DRAW_MIN_BATCH_COUNT, Number(settings.drawImageCount) || 1));

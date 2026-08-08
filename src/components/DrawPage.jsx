@@ -79,7 +79,6 @@ export default function DrawPage({
   const [previewImages, setPreviewImages] = useState(null);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
-  const [drawImageProcessing, setDrawImageProcessing] = useState(false);
 
   const generatedDrawGallery = useMemo(
     () => activeDrawMessages
@@ -120,7 +119,6 @@ export default function DrawPage({
   const collapsedLeftBottomRef = useRef(false);
   const keyboardVisibleRef = useRef(false);
   const collapseDebounceRef = useRef(0);
-  const drawImageProcessingRef = useRef(false);
   const composerPanelRef = useRef(null);
 
   const removeDrawPendingImage = useCallback((index) => {
@@ -129,17 +127,16 @@ export default function DrawPage({
       if (target) {
         const key = target.localUrl || target.url;
         drawRefUploadsRef?.current?.delete(key);
+        // 释放本地 object URL，避免内存泄漏（已上传成功的 url 已是 http blobUrl，不会被误释放）
+        if (target.localUrl && target.localUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(target.localUrl);
+        }
       }
       return (prev || []).filter((_, itemIndex) => itemIndex !== index);
     });
   }, [setDrawPendingImages, drawRefUploadsRef]);
 
-  const processDrawReferenceFiles = useCallback(async (files) => {
-    if (drawImageProcessingRef.current) {
-      setErrorText('参考图正在处理中，请稍候。');
-      return;
-    }
-
+  const processDrawReferenceFiles = useCallback((files) => {
     const normalizedFiles = Array.from(files || []);
     if (normalizedFiles.length === 0) return;
 
@@ -163,65 +160,50 @@ export default function DrawPage({
       setErrorText('');
     }
 
-    drawImageProcessingRef.current = true;
-    setDrawImageProcessing(true);
-    try {
-      // 1. 先本地压缩，拿到 data URL（本地缓存，立即显示，不依赖上传）
-      const prepared = await Promise.all(
-        filesToProcess.map(async (file) => {
-          const localUrl = await prepareDrawReferenceImage(file);
-          return {
-            name: file.name || `clipboard-image-${Date.now()}`,
-            localUrl,
-          };
-        }),
-      );
-
-      // 2. 立即加入 pendingImages，用本地 data URL 渲染，用户马上能看到
-      const newItems = prepared.map((p) => ({
-        name: p.name,
-        url: p.localUrl,
-        localUrl: p.localUrl,
+    // 无感上传策略：
+    // 1. 选图后立即用 object URL 本地缓存并显示，不阻塞 UI（按钮不禁用，可连续添加/输入/切换）；
+    // 2. 每张图独立后台执行：压缩 → 上传 → 把 url 更新为持久化 blobUrl → 释放本地 object URL；
+    //    上传在选图时就开始，用户输入提示词期间通常已完成，发送时无需等待。
+    for (const file of filesToProcess) {
+      const localUrl = URL.createObjectURL(file);
+      const item = {
+        name: file.name || `clipboard-image-${Date.now()}`,
+        url: localUrl,
+        localUrl,
         uploadState: 'uploading',
-      }));
-      setDrawPendingImages((prev) => [...(prev || []), ...newItems]);
+      };
+      setDrawPendingImages((prev) => [...(prev || []), item]);
 
-      // 3. 后台异步上传到 Vercel Blob 持久化，成功后把 url 更新为 blobUrl；
-      //    上传失败标记 failed（仍保留本地 data URL 用于回退，但发送时会被拦截）
-      for (const item of newItems) {
-        const promise = uploadDrawReferenceImage(item.localUrl)
-          .then((blobUrl) => {
-            setDrawPendingImages((prev) => prev.map((im) =>
-              im.localUrl === item.localUrl ? { ...im, url: blobUrl, uploadState: 'done' } : im,
-            ));
-            const record = drawRefUploadsRef?.current?.get(item.localUrl);
-            if (record) {
-              record.status = 'done';
-              record.url = blobUrl;
-            }
-            return blobUrl;
-          })
-          .catch((error) => {
-            setDrawPendingImages((prev) => prev.map((im) =>
-              im.localUrl === item.localUrl ? { ...im, uploadState: 'failed' } : im,
-            ));
-            const record = drawRefUploadsRef?.current?.get(item.localUrl);
-            if (record) record.status = 'failed';
-            console.warn('参考图上传失败，已保留本地缓存：', error);
-            return null;
-          });
-        // 记录保留在 ref 中直到发送完成或删除图片，供 handleDraw 读取最终状态
-        drawRefUploadsRef?.current?.set(item.localUrl, {
-          status: 'uploading',
-          url: item.localUrl,
-          promise,
-        });
-      }
-    } catch (error) {
-      setErrorText(error.message || '参考图处理失败');
-    } finally {
-      drawImageProcessingRef.current = false;
-      setDrawImageProcessing(false);
+      const promise = (async () => {
+        // 后台压缩为 data URL 再上传到 Vercel Blob
+        const compressedDataUrl = await prepareDrawReferenceImage(file);
+        const blobUrl = await uploadDrawReferenceImage(compressedDataUrl);
+        setDrawPendingImages((prev) => prev.map((im) =>
+          im.localUrl === localUrl ? { ...im, url: blobUrl, uploadState: 'done' } : im,
+        ));
+        const record = drawRefUploadsRef?.current?.get(localUrl);
+        if (record) {
+          record.status = 'done';
+          record.url = blobUrl;
+        }
+        // url 已切换为 http blobUrl，释放本地 object URL
+        URL.revokeObjectURL(localUrl);
+        return blobUrl;
+      })().catch((error) => {
+        setDrawPendingImages((prev) => prev.map((im) =>
+          im.localUrl === localUrl ? { ...im, uploadState: 'failed' } : im,
+        ));
+        const record = drawRefUploadsRef?.current?.get(localUrl);
+        if (record) record.status = 'failed';
+        console.warn('参考图上传失败，已保留本地缓存：', error);
+        return null;
+      });
+
+      drawRefUploadsRef?.current?.set(localUrl, {
+        status: 'uploading',
+        url: localUrl,
+        promise,
+      });
     }
   }, [drawPendingImages, setDrawPendingImages, setErrorText, drawRefUploadsRef]);
 
@@ -1144,9 +1126,9 @@ export default function DrawPage({
                   type="default"
                   size="small"
                   onClick={() => drawFileInputRef.current?.click()}
-                  disabled={drawImageProcessing || (drawPendingImages?.length || 0) >= DRAW_MAX_REFERENCE_IMAGES}
+                  disabled={(drawPendingImages?.length || 0) >= DRAW_MAX_REFERENCE_IMAGES}
                   aria-label="上传参考图"
-                  aria-busy={drawImageProcessing}
+                  aria-busy={drawPendingImages?.some((img) => img.uploadState === 'uploading') || false}
                 >
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />

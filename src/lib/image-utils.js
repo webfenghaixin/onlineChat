@@ -100,10 +100,43 @@ export async function prepareDrawReferenceImage(file) {
   );
 }
 
+// 带重试的 fetch：仅对网络错误 / 5xx / 429 重试，4xx（如 401/400/413）立即抛出
+async function fetchUploadWithRetry(input, init, { retries = 3, baseDelay = 500 } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    let response;
+    try {
+      response = await fetch(input, init);
+    } catch (error) {
+      // 网络抖动 / 中断：可重试
+      lastError = error;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, baseDelay * 2 ** attempt));
+        continue;
+      }
+      throw error;
+    }
+    // 5xx / 429（限流）：可重试
+    if (response.status >= 500 || response.status === 429) {
+      let body = null;
+      try { body = await response.json(); } catch {}
+      lastError = new Error(body?.error || `参考图上传失败 (${response.status})`);
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, baseDelay * 2 ** attempt));
+        continue;
+      }
+      // 重试耗尽，返回最后的响应让调用方读取错误
+      return { response, preParsedBody: body };
+    }
+    return { response, preParsedBody: null };
+  }
+  throw lastError || new Error('参考图上传失败');
+}
+
 // 将压缩后的参考图 data URL 上传到 Vercel Blob 持久化，返回 blob URL
 export async function uploadDrawReferenceImage(dataUrl) {
   const token = getToken();
-  const response = await fetch(`${API_BASE}/api/draw-task/upload-ref`, {
+  const { response, preParsedBody } = await fetchUploadWithRetry(`${API_BASE}/api/draw-task/upload-ref`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -111,7 +144,7 @@ export async function uploadDrawReferenceImage(dataUrl) {
     },
     body: JSON.stringify({ image: dataUrl }),
   });
-  const data = await response.json().catch(() => ({}));
+  const data = preParsedBody || await response.json().catch(() => ({}));
   if (!response.ok || !data.url) {
     throw new Error(data.error || '参考图上传失败，请稍后重试。');
   }

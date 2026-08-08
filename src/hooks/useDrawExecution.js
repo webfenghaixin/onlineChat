@@ -209,21 +209,21 @@ export function useDrawExecution({
       await Promise.all(pendingUploads);
     }
 
-    // 从上传状态映射出最终可用 URL；上传失败的图跳过（不阻断生成，用其余成功图）
-    const failedRefCount = drawPendingImages.filter((img) => {
-      const key = img.localUrl || img.url;
-      return drawRefUploadsRef?.current?.get(key)?.status === 'failed';
-    }).length;
+    // 从上传状态映射出最终可用 URL；上传失败的图阻断发送并提示用户重新添加
     const referenceImages = drawPendingImages
       .map((img) => {
         const key = img.localUrl || img.url;
         const upload = drawRefUploadsRef?.current?.get(key);
-        if (upload?.status === 'failed') return null;
         return upload ? upload.url : img.url;
       })
       .filter(Boolean);
+    const failedRefCount = drawPendingImages.filter((img) => {
+      const key = img.localUrl || img.url;
+      return drawRefUploadsRef?.current?.get(key)?.status === 'failed';
+    }).length;
     if (failedRefCount > 0) {
-      setErrorText(`${failedRefCount} 张参考图上传失败已跳过，将使用其余参考图生成。`);
+      setErrorText(`${failedRefCount} 张参考图上传失败，请移除后重新添加再生成。`);
+      return;
     }
 
     const imageCount = Math.min(DRAW_MAX_BATCH_COUNT, Math.max(DRAW_MIN_BATCH_COUNT, Number(settings.drawImageCount) || 1));

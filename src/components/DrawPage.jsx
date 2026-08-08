@@ -186,8 +186,8 @@ export default function DrawPage({
           record.status = 'done';
           record.url = blobUrl;
         }
-        // url 已切换为 http blobUrl，释放本地 object URL
-        URL.revokeObjectURL(localUrl);
+        // 延迟释放本地 object URL，确保 React 已完成重渲染（img.src 已切换为 http blobUrl）
+        setTimeout(() => URL.revokeObjectURL(localUrl), 2000);
         return blobUrl;
       })().catch((error) => {
         setDrawPendingImages((prev) => prev.map((im) =>
@@ -1002,13 +1002,26 @@ export default function DrawPage({
               {Array.isArray(drawPendingImages) && drawPendingImages.length > 0 && (
                 <div className="pending-images-row">
                   {drawPendingImages.map((img, index) => (
-                    <div key={index} className="pending-image-card pending-image-card-mini">
+                    <div
+                      key={index}
+                      className={classNames(
+                        'pending-image-card',
+                        'pending-image-card-mini',
+                        img.uploadState === 'failed' && 'pending-image-card-failed',
+                      )}
+                    >
                       <img
                         className="pending-image-preview pending-image-clickable"
                         src={img.url}
                         alt={`参考图 ${index + 1}`}
                         onClick={() => openPreview(drawPendingImages.map((i) => i.url), index)}
                       />
+                      {img.uploadState === 'uploading' && (
+                        <span className="pending-image-badge">上传中</span>
+                      )}
+                      {img.uploadState === 'failed' && (
+                        <span className="pending-image-badge pending-image-badge-failed">失败</span>
+                      )}
                       <Button
                         className="pending-image-remove"
                         type="text"

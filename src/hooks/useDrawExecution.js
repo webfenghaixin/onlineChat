@@ -9,7 +9,7 @@ import {
   DRAW_REFERENCE_TOTAL_BYTES_LIMIT,
 } from '../lib/constants.js';
 import { getRefImages } from '../lib/ref-image-store.js';
-import { recompressImages } from '../lib/image-utils.js';
+import { recompressImages, recompressDataUrls } from '../lib/image-utils.js';
 
 /**
  * 制图任务提交、执行、轮询恢复（从 useDrawActions 拆分）
@@ -48,7 +48,7 @@ export function useDrawExecution({
   const activeDrawTaskIdsRef = useRef(new Set());
   const resumedDrawTasksRef = useRef(new Set());
 
-  const _executeDraw = useCallback(async ({ prompt, referenceImages, targetConvId, model, size, quality, imageCount = 1 }) => {
+  const _executeDraw = useCallback(async ({ prompt, referenceImages, referenceMeta, targetConvId, model, size, quality, imageCount = 1, preWarning }) => {
     if (!prompt || drawSubmissionRef.current || authState !== 'authenticated') return;
     const requestedCount = Math.min(DRAW_MAX_BATCH_COUNT, Math.max(DRAW_MIN_BATCH_COUNT, Number(imageCount) || 1));
     const totalCost = Number((COST_DRAW * requestedCount).toFixed(2));
@@ -67,6 +67,8 @@ export function useDrawExecution({
     };
     if (drawImageCount + requestedCount > DRAW_MAX_IMAGES) setDrawLimitWarning(true);
     setErrorText('');
+    // 参考图部分不可用的警告在此回填，避免被上面的清空逻辑覆盖
+    if (preWarning) setErrorText(preWarning);
     setStatusText('正在提交图片任务');
     if (!targetConvId || !drawConversationsRef.current.find((c) => c.id === targetConvId)) {
       const conv = createDrawConversation();
@@ -79,9 +81,12 @@ export function useDrawExecution({
     const batchId = createId();
     // 消息仅存轻量元数据 referenceMeta（refId + name），data URL 已写入本地 ref-image-store，
     // 避免大体积 base64 进入 Redis 任务记录；referenceImageCount 保留作为兼容字段。
-    const referenceMetaArray = (Array.isArray(drawPendingImages) ? drawPendingImages : [])
+    // 优先用调用方传入的 referenceMeta（"再次生成"/重试复用原消息 refId），
+    // 否则从 drawPendingImages 派生（正常发送场景）。
+    const derivedMeta = (Array.isArray(drawPendingImages) ? drawPendingImages : [])
       .filter((img) => img.uploadState !== 'failed' && img.refId)
       .map((img) => ({ refId: img.refId, name: img.name }));
+    const referenceMetaArray = referenceMeta || derivedMeta;
     const userMessage = {
       id: createId(), role: 'user', content: prompt,
       referenceMeta: referenceMetaArray.length > 0 ? referenceMetaArray : null,
@@ -210,27 +215,39 @@ export function useDrawExecution({
       return;
     }
 
-    // 可发送项：跳过选图阶段失败的项，且必须保留原始 file 引用（无 file 的项无法重压）
-    const readyItems = pendingList.filter((img) => img.uploadState !== 'failed' && img.file);
+    // 可发送项：跳过选图阶段失败的项。
+    // 含原始 file 的项（新选图）可用 file 重压；无 file 但有 data URL 的项（编辑恢复）用 data URL 重压。
+    const readyItems = pendingList.filter((img) => img.uploadState !== 'failed' && img.url && img.url.startsWith('data:'));
+    const itemsWithFile = readyItems.filter((img) => img.file);
+    const itemsWithoutFile = readyItems.filter((img) => !img.file);
 
     let referenceImages = [];
     let recompressFailedCount = 0;
     if (readyItems.length > 1) {
       // 多图：按最终图片数量动态重压（单张质量档位随数量降低、总量守恒不超 Redis 0.75MB）
       setStatusText('正在按图片数量调整参考图质量...');
-      const recompressed = await recompressImages(
-        readyItems.map((img) => ({ file: img.file, name: img.name })),
-        readyItems.length,
-        'draw',
-      );
-      // 仅保留重压成功（url 非空）的项，保持原顺序；失败项计数用于提示
-      referenceImages = recompressed.filter((item) => item.url).map((item) => item.url);
-      recompressFailedCount = recompressed.length - referenceImages.length;
+      const withFileResults = itemsWithFile.length > 0
+        ? await recompressImages(itemsWithFile.map((img) => ({ file: img.file, name: img.name })), readyItems.length, 'draw')
+        : [];
+      const withoutFileResults = itemsWithoutFile.length > 0
+        ? await recompressDataUrls(itemsWithoutFile.map((img) => img.url), readyItems.length, 'draw')
+        : [];
+      // 按 readyItems 原始顺序回填（file / data 两组各自按序取），保持用户选择的参考图顺序
+      let fileIndex = 0;
+      let dataIndex = 0;
+      const orderedUrls = [];
+      for (const img of readyItems) {
+        const item = img.file ? withFileResults[fileIndex++] : withoutFileResults[dataIndex++];
+        if (item?.url) {
+          orderedUrls.push(item.url);
+        } else {
+          recompressFailedCount += 1;
+        }
+      }
+      referenceImages = orderedUrls;
     } else if (readyItems.length === 1) {
       // 单图（count === 1）：选图阶段已按"1 张档"最高质量压缩，直接使用已有 data URL，无需重压
-      referenceImages = readyItems
-        .map((img) => img.url)
-        .filter((url) => typeof url === 'string' && url.startsWith('data:'));
+      referenceImages = [readyItems[0].url];
     }
 
     // 总量校验：data URL 的 base64 长度总和不能超过限制，避免撑爆后端 Redis 任务记录（0.75MB）
@@ -240,20 +257,28 @@ export function useDrawExecution({
       return;
     }
 
-    // 重压失败项：提示已跳过，不阻断发送；若全部失败 referenceImages 为空数组，沿用现有行为照常发送
-    if (recompressFailedCount > 0) {
-      setErrorText(`${recompressFailedCount} 张参考图压缩调整失败已跳过，将使用其余参考图生成。`);
-    }
-
-    // 选图阶段压缩失败的项提示已跳过，仍使用其余参考图生成
+    // 参考图可用性汇总：部分不可用 → 经 preWarning 在 _executeDraw 里回显；
+    // 有参考图意图却一张都没用上 → 阻止发送，避免无参考图生成出非预期结果。
+    const intentCount = pendingList.filter((img) => img.uploadState !== 'failed').length;
+    const droppedUnusable = intentCount - readyItems.length;
     const failedCount = pendingList.filter((img) => img.uploadState === 'failed').length;
-    if (failedCount > 0) {
-      setErrorText(`${failedCount} 张参考图处理失败已跳过，将使用其余参考图生成。`);
+    const totalUnusable = recompressFailedCount + droppedUnusable;
+    let preWarning = '';
+    if (pendingList.length > 0 && referenceImages.length === 0) {
+      setErrorText('参考图全部无法使用，请重新添加参考图后再发送。');
+      return;
+    }
+    if (totalUnusable > 0 || failedCount > 0) {
+      const parts = [];
+      if (totalUnusable > 0) parts.push(`${totalUnusable} 张参考图无法使用已跳过`);
+      if (failedCount > 0) parts.push(`${failedCount} 张参考图处理失败已跳过`);
+      preWarning = `${parts.join('，')}，将使用其余 ${referenceImages.length} 张参考图生成。`;
     }
 
     const imageCount = Math.min(DRAW_MAX_BATCH_COUNT, Math.max(DRAW_MIN_BATCH_COUNT, Number(settings.drawImageCount) || 1));
     await _executeDraw({
       prompt, referenceImages,
+      preWarning,
       targetConvId: activeDrawConversationId,
       model: settings.drawModel || 'gpt-image-2',
       size: settings.drawSize || '1024x1024',
@@ -267,15 +292,26 @@ export function useDrawExecution({
     if (!conv || !conv.messages) return;
     const userMsg = conv.messages.find((m) => m.id === userMessageId);
     if (!userMsg) return;
+
+    // 恢复参考图元数据（refId + name），供重试消息历史回显；本地无图时仍保留 meta（占位显示）
+    const metaList = Array.isArray(userMsg.referenceMeta)
+      ? userMsg.referenceMeta.filter((meta) => meta?.refId)
+      : [];
+    // 原消息是否携带参考图：用于"全部无法使用"时阻止重试，避免无参考图重试
+    const hadRefs = metaList.length > 0
+      || (Array.isArray(userMsg.referenceImages) && userMsg.referenceImages.length > 0)
+      || Boolean(userMsg.referenceImage);
+
     let referenceImages = [];
+    let preWarning = '';
     // 新数据：从 referenceMeta（refId 列表）恢复本地 ref-image-store 中的 data URL；
-    // 若本地无图（已清理/换设备），仅用取到的图重试并提示。
-    if (Array.isArray(userMsg.referenceMeta) && userMsg.referenceMeta.length > 0) {
-      const metaList = userMsg.referenceMeta.filter((meta) => meta?.refId);
+    // 恢复的是选图阶段"1 张档"最高质量版本，多张重试时需按最终数量动态重压 + 总量校验，
+    // 避免 data URL 总量超过 Redis 1MB 限制导致任务创建失败（参考图丢失）。
+    if (metaList.length > 0) {
       const records = await getRefImages(metaList.map((meta) => meta.refId));
       referenceImages = records.map((record) => record.dataUrl).filter(Boolean);
       if (referenceImages.length < metaList.length) {
-        setErrorText('部分原参考图仅当前设备可见且已被清理，已使用剩余参考图重试。');
+        preWarning = `部分原参考图仅当前设备可见且已被清理，已使用剩余 ${referenceImages.length} 张参考图重试。`;
       }
     }
     // 兼容旧数据：referenceImages（blob URL）/ referenceImage 单图
@@ -284,9 +320,38 @@ export function useDrawExecution({
         ? userMsg.referenceImages
         : userMsg.referenceImage ? [userMsg.referenceImage] : [];
     }
+
+    // 原消息有参考图但一张都恢复不了（本地已清理/失效）→ 阻止重试，提示走"再次生成"重新添加
+    if (hadRefs && referenceImages.length === 0) {
+      setErrorText('原参考图无法使用（本地已清理或已失效），请点击"再次生成"重新添加参考图后重试。');
+      return;
+    }
+
+    // 多张本地 data URL 时按最终数量动态重压（1 张档最高质量 → 数量档），并做总量校验
+    if (referenceImages.length > 1 && referenceImages.every((url) => url.startsWith('data:'))) {
+      setStatusText('正在按图片数量调整参考图质量...');
+      const recompressed = await recompressDataUrls(referenceImages, referenceImages.length, 'draw');
+      referenceImages = recompressed.filter((item) => item.url).map((item) => item.url);
+      const failedCount = recompressed.length - referenceImages.length;
+      if (failedCount > 0) {
+        preWarning = `${failedCount} 张参考图压缩调整失败已跳过，将使用其余参考图重试。`;
+      }
+      if (hadRefs && referenceImages.length === 0) {
+        setErrorText('参考图全部无法使用，请点击"再次生成"重新添加参考图后重试。');
+        return;
+      }
+    }
+    const totalRefBytes = referenceImages.reduce((sum, url) => sum + url.length, 0);
+    if (totalRefBytes > DRAW_REFERENCE_TOTAL_BYTES_LIMIT) {
+      setErrorText('参考图体积过大，请编辑消息重新添加参考图后再试。');
+      return;
+    }
+
     await _executeDraw({
       prompt: getTextParts(userMsg.content),
       referenceImages,
+      referenceMeta: metaList.length > 0 ? metaList : null,
+      preWarning,
       targetConvId: conv.id,
       model: userMsg.model || settings.drawModel || 'gpt-image-2',
       size: userMsg.size || settings.drawSize || '1024x1024',
@@ -320,6 +385,10 @@ export function useDrawExecution({
           });
         }
       });
+      // 本地 store 缺图时明确提示，避免用户误以为参考图全部恢复
+      if (restoredItems.length < metaList.length) {
+        setErrorText(`${metaList.length - restoredItems.length} 张参考图在当前设备不可用（已被清理或原设备数据），已恢复其余 ${restoredItems.length} 张。`);
+      }
     }
     // 兼容旧数据：referenceImages（blob URL）/ referenceImage 单图
     if (restoredItems.length === 0) {
@@ -413,6 +482,7 @@ export function useDrawExecution({
       }
     }
     if (!pendingTasks.length) return undefined;
+    setStatusText(`已恢复 ${pendingTasks.length} 个制图任务，正在等待生成结果...`);
     pendingTasks.forEach((task) => {
       resumedDrawTasksRef.current.add(task.taskId);
       activeDrawTaskIdsRef.current.add(task.taskId);
@@ -445,7 +515,7 @@ export function useDrawExecution({
       });
     });
     return undefined;
-  }, [authState, drawConversations, settings, updateDrawConversation]);
+  }, [authState, drawConversations, settings, updateDrawConversation, setStatusText]);
 
   return {
     isDrawSubmitting,

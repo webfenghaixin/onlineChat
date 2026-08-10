@@ -183,8 +183,11 @@ export function useCloudSync({
     cloudLoadingRef.current = true;
     resetCloudDirtyState();
 
-    let settleTimer = null;
     setAuthLoadingActive(true);
+    // 余额与云数据并行加载，余额失败不影响鉴权进入
+    fetchBalance()
+      .then((r) => setBalance(r.balance))
+      .catch(() => {});
     loadFromCloud()
       .then((data) => {
         const merged = mergeCloudData(loadedState, data);
@@ -202,22 +205,12 @@ export function useCloudSync({
           loadConversationMessages(merged.activeConversationId);
         }
         setAuthLoadingActive(false);
-        settleTimer = window.setTimeout(() => {
-          setAuthState('authenticated');
-        }, 900);
-        fetchBalance()
-          .then((r) => setBalance(r.balance))
-          .catch(() => {});
+        setAuthState('authenticated');
       })
       .catch(() => {
         clearToken();
         setAuthLoadingActive(false);
-        settleTimer = window.setTimeout(() => {
-          setAuthState('auth-form');
-        }, 900);
+        setAuthState('auth-form');
       });
-    return () => {
-      if (settleTimer) window.clearTimeout(settleTimer);
-    };
   }, [authState]); // eslint-disable-line react-hooks/exhaustive-deps
 }

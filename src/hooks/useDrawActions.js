@@ -175,16 +175,27 @@ export function useDrawActions({
         const localTaskId = localByMessageId.get(m.id)?.taskId;
         return localTaskId ? { ...m, taskId: localTaskId } : m;
       });
+      // 保护正在提交的乐观消息：云端刷新结果可能比本地旧（如 batch 提交尚未落库），
+      // 不能整体替换掉本地消息。仅保留 5 分钟内、带 batchId 的本地消息（进行中的提交批次），
+      // 避免"切走页面后很快切回"的竞态下刚发送的消息消失。
+      const cloudIds = new Set(mergedMessages.map((m) => m.id));
+      const localInFlight = localMessages.filter(
+        (m) => !cloudIds.has(m.id)
+          && m.batchId
+          && typeof m.createdAt === 'number'
+          && now - m.createdAt < DRAW_PENDING_TIMEOUT_MS,
+      );
+      const finalMessages = [...mergedMessages, ...localInFlight];
       return current.map((c) =>
         c.id === conversationId
           ? {
               ...c,
-              messages: mergedMessages,
+              messages: finalMessages,
               messagesLoaded: true,
               title: title || c.title,
               updatedAt: updatedAt || c.updatedAt,
-              messageCount: mergedMessages.length,
-              imageCount: mergedMessages.filter((msg) => msg.role === 'assistant' && msg.imageUrl).length,
+              messageCount: finalMessages.length,
+              imageCount: finalMessages.filter((msg) => msg.role === 'assistant' && msg.imageUrl).length,
             }
           : c,
       );

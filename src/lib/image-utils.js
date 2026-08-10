@@ -42,7 +42,8 @@ function canvasToBlob(canvas, type, quality) {
 
 /**
  * 通用图片压缩：按最大边缩放，循环降低质量直到满足体积上限。
- * @param {File} file 原始图片文件
+ * 入参 src 可为 File/Blob 或 data URL 字符串（用于对已压缩过的 data URL 二次重压）。
+ * @param {File | Blob | string} src 原始图片（File/Blob）或 data URL 字符串
  * @param {object} options 压缩配置
  * @param {number} options.maxDimension 最大边长（px）
  * @param {number} options.maxBytes 目标体积上限（字节）
@@ -50,9 +51,9 @@ function canvasToBlob(canvas, type, quality) {
  * @param {string} errorLabel 错误提示中的图片称呼（如「参考图」「图片」）
  * @returns {Promise<string>} 压缩后的 data URL
  */
-async function compressImageToDataUrl(file, options, errorLabel = '图片') {
+async function compressImageToDataUrl(src, options, errorLabel = '图片') {
   const { maxDimension, maxBytes, minQuality } = options;
-  const originalDataUrl = await readAsDataUrl(file);
+  const originalDataUrl = typeof src === 'string' ? src : await readAsDataUrl(src);
   const image = await loadImageElement(originalDataUrl);
   const sourceWidth = image.naturalWidth || image.width;
   const sourceHeight = image.naturalHeight || image.height;
@@ -190,6 +191,64 @@ export async function recompressImages(items, count, module = 'chat') {
       result.push({ file: item.file, name: item.name, url });
     } catch (error) {
       result.push({ file: item.file, name: item.name, url: null, error: error.message || '压缩失败' });
+    }
+  }
+  return result;
+}
+
+// 制图参考图两档降级压缩的源无关版本：src 可为 File 或 data URL 字符串
+async function compressReferenceFromSrc(src, count) {
+  const tier = resolveDynamicCompressionTier('draw', count);
+  try {
+    return await compressImageToDataUrl(
+      src,
+      {
+        maxDimension: tier.maxDimension,
+        maxBytes: tier.maxBytes,
+        minQuality: tier.minQuality,
+      },
+      '参考图',
+    );
+  } catch (error) {
+    if (typeof error?.message === 'string' && error.message.includes('仍然过大')) {
+      try {
+        return await compressImageToDataUrl(
+          src,
+          {
+            maxDimension: DRAW_REFERENCE_FALLBACK_MAX_DIMENSION,
+            maxBytes: tier.maxBytes,
+            minQuality: 0.4,
+          },
+          '参考图',
+        );
+      } catch {
+        throw new Error('参考图仍然过大，请更换体积更小的图片后重试。');
+      }
+    }
+    throw error;
+  }
+}
+
+// 发送前对"无原始 file、仅有 data URL"的参考图按最终数量重压（如"再次生成"从本地存储恢复的场景）。
+// 逐张处理，单项失败不中断整体，失败项 error 非空、url 为 null，整体不抛错。
+/**
+ * 按最终数量重压 data URL 图片列表。
+ * @param {string[]} dataUrls 待重压的 data URL 数组
+ * @param {number} count 本次图片最终数量
+ * @param {'chat' | 'draw'} [module='chat'] 压缩档位模块
+ * @returns {Promise<Array<{ url: string | null, error?: string }>>}
+ */
+export async function recompressDataUrls(dataUrls, count, module = 'chat') {
+  const result = [];
+  const tier = resolveDynamicCompressionTier(module, count);
+  for (const dataUrl of dataUrls) {
+    try {
+      const url = module === 'draw'
+        ? await compressReferenceFromSrc(dataUrl, count)
+        : await compressImageToDataUrl(dataUrl, tier, '图片');
+      result.push({ url });
+    } catch (error) {
+      result.push({ url: null, error: error.message || '压缩失败' });
     }
   }
   return result;

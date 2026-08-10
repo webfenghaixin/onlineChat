@@ -6,6 +6,7 @@ import {
 } from '../lib/utils.js';
 import { fetchConversation } from '../lib/auth.js';
 import { COST_CHAT } from '../lib/constants.js';
+import { recompressImages } from '../lib/image-utils.js';
 import { useChatImages } from './useChatImages.js';
 
 /**
@@ -158,11 +159,35 @@ export function useChatActions({
   }, []);
 
   const sendMessage = useCallback(async (customContent) => {
+    // 多图发送前按最终图片数量重新压缩（单图/无图时跳过：选图阶段已按 1 张档位最高质量压缩）
+    let usableImageItems = pendingImages;
+    if (!customContent && pendingImages.length > 1) {
+      setStatusText('正在处理图片');
+      // 防御性处理：缺少原始 file 引用的项无法重压，直接沿用选图阶段的 url
+      const itemsWithoutFile = pendingImages.filter((img) => !img.file);
+      const itemsWithFile = pendingImages.filter((img) => img.file);
+      let recompressedUsable = [];
+      if (itemsWithFile.length > 0) {
+        const recompressed = await recompressImages(
+          itemsWithFile.map((img) => ({ file: img.file, name: img.name })),
+          pendingImages.length,
+          'chat',
+        );
+        // 仅保留重压成功（url 非空）的项，失败项剔除并提示
+        recompressedUsable = recompressed.filter((item) => item.url);
+        const dropped = recompressed.length - recompressedUsable.length;
+        if (dropped > 0) {
+          setErrorText(`${dropped} 张图片压缩调整失败已跳过。`);
+        }
+      }
+      usableImageItems = [...recompressedUsable, ...itemsWithoutFile];
+    }
+
     const content =
       customContent ||
       [
         ...(draft.trim() ? [{ type: 'text', text: draft.trim() }] : []),
-        ...pendingImages.map((img) => ({ type: 'image_url', image_url: { url: img.url } })),
+        ...usableImageItems.map((img) => ({ type: 'image_url', image_url: { url: img.url } })),
       ];
     const textContent = getTextParts(content).trim();
     const hasImage = getImageParts(content).length > 0;

@@ -37,8 +37,9 @@ export default async function handler(request) {
     return jsonResponse(400, { error: '密码长度至少 6 个字符' });
   }
 
-  const validInviteCode = process.env.INVITE_CODE || '';
-  if (!validInviteCode || inviteCode !== validInviteCode) {
+  // 校验值兼容 INVITE_CODE 与 VITE_INVITE_CODE 两个环境变量，均未配置时为空字符串（跳过邀请码校验）
+  const validInviteCode = process.env.INVITE_CODE || process.env.VITE_INVITE_CODE || '';
+  if (validInviteCode && inviteCode !== validInviteCode) {
     return jsonResponse(400, { error: '邀请码不正确' });
   }
 

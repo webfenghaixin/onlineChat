@@ -1,13 +1,14 @@
 import {
-  DRAW_REFERENCE_MAX_DIMENSION,
-  DRAW_REFERENCE_MAX_BYTES,
+  DRAW_REFERENCE_TIER_1_MAX_BYTES,
+  DRAW_REFERENCE_DIM_TIERS,
+  DRAW_REFERENCE_FALLBACK_MAX_DIMENSION,
   DRAW_REFERENCE_MIN_QUALITY,
-  CHAT_IMAGE_MAX_DIMENSION,
-  CHAT_IMAGE_MAX_BYTES,
+  DRAW_REFERENCE_TOTAL_BYTES_LIMIT,
+  CHAT_IMAGE_TIER_1_MAX_BYTES,
+  CHAT_IMAGE_DIM_TIERS,
+  CHAT_IMAGE_TOTAL_BYTES_LIMIT,
   CHAT_IMAGE_MIN_QUALITY,
 } from './constants';
-import { API_BASE } from './constants';
-import { getToken } from './auth.js';
 
 function readAsDataUrl(blob) {
   return new Promise((resolve, reject) => {
@@ -88,77 +89,108 @@ async function compressImageToDataUrl(file, options, errorLabel = '图片') {
   return readAsDataUrl(blob);
 }
 
-export async function prepareDrawReferenceImage(file) {
+/**
+ * 按图片数量动态解析压缩档位：1 张最高质量，数量越多单张体积与尺寸越小，总量守恒不超安全线。
+ * 单张体积上限 = min(1 张档上限, 总量预算 / 张数 / 1.4)，1.4 为 base64 膨胀预留余量；
+ * 单张尺寸按数量阶梯递减（index = count - 1，count 超过档位数取最后档）。
+ * @param {'draw' | 'chat'} module 模块类型：draw 制图 / chat 聊天
+ * @param {number} [count=1] 本次图片数量
+ * @returns {{ maxBytes: number, maxDimension: number, minQuality: number }}
+ */
+export function resolveDynamicCompressionTier(module, count = 1) {
+  const isDraw = module === 'draw';
+  const totalBudget = isDraw ? DRAW_REFERENCE_TOTAL_BYTES_LIMIT : CHAT_IMAGE_TOTAL_BYTES_LIMIT;
+  const tier1MaxBytes = isDraw ? DRAW_REFERENCE_TIER_1_MAX_BYTES : CHAT_IMAGE_TIER_1_MAX_BYTES;
+  const dimTiers = isDraw ? DRAW_REFERENCE_DIM_TIERS : CHAT_IMAGE_DIM_TIERS;
+  const minQuality = isDraw ? DRAW_REFERENCE_MIN_QUALITY : CHAT_IMAGE_MIN_QUALITY;
+
+  const n = Math.max(1, Math.min(dimTiers.length, Math.floor(Number(count) || 1)));
+  const maxBytes = Math.min(tier1MaxBytes, totalBudget / n / 1.4);
+  const maxDimension = dimTiers[n - 1];
+  return { maxBytes, maxDimension, minQuality };
+}
+
+// 制图参考图两档降级压缩：
+// 常规档按动态档位压缩（数量越多单张越小），失败（"仍然过大"）时
+// 自动降级到 640px、质量 0.4 重压一次；两档都失败才抛出最终错误，提示用户更换图片。
+/**
+ * 压缩制图参考图：按数量动态分配档位，含两档降级。
+ * @param {File} file 参考图文件
+ * @param {number} [count=1] 本次参考图数量
+ * @returns {Promise<string>} 压缩后的 data URL
+ */
+export async function prepareDrawReferenceImage(file, count = 1) {
+  const tier = resolveDynamicCompressionTier('draw', count);
+  try {
+    return await compressImageToDataUrl(
+      file,
+      {
+        maxDimension: tier.maxDimension,
+        maxBytes: tier.maxBytes,
+        minQuality: tier.minQuality,
+      },
+      '参考图',
+    );
+  } catch (error) {
+    // 仅对"仍然过大"类错误降级重压；读取/解析类错误重压也无法解决，原样抛出
+    if (typeof error?.message === 'string' && error.message.includes('仍然过大')) {
+      try {
+        return await compressImageToDataUrl(
+          file,
+          {
+            maxDimension: DRAW_REFERENCE_FALLBACK_MAX_DIMENSION,
+            maxBytes: tier.maxBytes,
+            minQuality: 0.4,
+          },
+          '参考图',
+        );
+      } catch {
+        throw new Error('参考图仍然过大，请更换体积更小的图片后重试。');
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * 压缩聊天图片：按数量动态分配档位，单档压缩不降级。
+ * @param {File} file 图片文件
+ * @param {number} [count=1] 本次图片数量
+ * @returns {Promise<string>} 压缩后的 data URL
+ */
+export async function prepareChatImage(file, count = 1) {
+  const tier = resolveDynamicCompressionTier('chat', count);
   return compressImageToDataUrl(
     file,
     {
-      maxDimension: DRAW_REFERENCE_MAX_DIMENSION,
-      maxBytes: DRAW_REFERENCE_MAX_BYTES,
-      minQuality: DRAW_REFERENCE_MIN_QUALITY,
-    },
-    '参考图',
-  );
-}
-
-// 带重试的 fetch：仅对网络错误 / 5xx / 429 重试，4xx（如 401/400/413）立即抛出
-async function fetchUploadWithRetry(input, init, { retries = 3, baseDelay = 500 } = {}) {
-  let lastError;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    let response;
-    try {
-      response = await fetch(input, init);
-    } catch (error) {
-      // 网络抖动 / 中断：可重试
-      lastError = error;
-      if (attempt < retries) {
-        await new Promise((resolve) => setTimeout(resolve, baseDelay * 2 ** attempt));
-        continue;
-      }
-      throw error;
-    }
-    // 5xx / 429（限流）：可重试
-    if (response.status >= 500 || response.status === 429) {
-      let body = null;
-      try { body = await response.json(); } catch {}
-      lastError = new Error(body?.error || `参考图上传失败 (${response.status})`);
-      if (attempt < retries) {
-        await new Promise((resolve) => setTimeout(resolve, baseDelay * 2 ** attempt));
-        continue;
-      }
-      // 重试耗尽，返回最后的响应让调用方读取错误
-      return { response, preParsedBody: body };
-    }
-    return { response, preParsedBody: null };
-  }
-  throw lastError || new Error('参考图上传失败');
-}
-
-// 将压缩后的参考图 data URL 上传到 Vercel Blob 持久化，返回 blob URL
-export async function uploadDrawReferenceImage(dataUrl) {
-  const token = getToken();
-  const { response, preParsedBody } = await fetchUploadWithRetry(`${API_BASE}/api/draw-task/upload-ref`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ image: dataUrl }),
-  });
-  const data = preParsedBody || await response.json().catch(() => ({}));
-  if (!response.ok || !data.url) {
-    throw new Error(data.error || '参考图上传失败，请稍后重试。');
-  }
-  return data.url;
-}
-
-export async function prepareChatImage(file) {
-  return compressImageToDataUrl(
-    file,
-    {
-      maxDimension: CHAT_IMAGE_MAX_DIMENSION,
-      maxBytes: CHAT_IMAGE_MAX_BYTES,
-      minQuality: CHAT_IMAGE_MIN_QUALITY,
+      maxDimension: tier.maxDimension,
+      maxBytes: tier.maxBytes,
+      minQuality: tier.minQuality,
     },
     '图片',
   );
+}
+
+// 发送前按最终数量对多张图片统一重压（制图与聊天模块共用）。
+// 制图发送重压走 draw 档位（更注重质量，1280px 起），聊天发送重压走 chat 档位；
+// 逐张处理，单项失败不中断整体，失败项 error 非空、url 为 null，整体不抛错。
+/**
+ * 按最终数量重压多张图片。
+ * @param {Array<{ file: File, name?: string }>} items 待重压图片列表（每项至少含 file）
+ * @param {number} count 本次图片最终数量
+ * @param {'chat' | 'draw'} [module='chat'] 压缩档位模块，chat 聊天 / draw 制图
+ * @returns {Promise<Array<{ file: File, name?: string, url: string | null, error?: string }>>}
+ */
+export async function recompressImages(items, count, module = 'chat') {
+  const result = [];
+  const prepare = module === 'draw' ? prepareDrawReferenceImage : prepareChatImage;
+  for (const item of items) {
+    try {
+      const url = await prepare(item.file, count);
+      result.push({ file: item.file, name: item.name, url });
+    } catch (error) {
+      result.push({ file: item.file, name: item.name, url: null, error: error.message || '压缩失败' });
+    }
+  }
+  return result;
 }

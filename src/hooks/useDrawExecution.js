@@ -4,7 +4,12 @@ import {
   createId, createDrawConversation, getTextParts, resolveDrawDurationSeconds,
 } from '../lib/utils.js';
 import { fetchBalance } from '../lib/auth.js';
-import { DRAW_MAX_IMAGES, DRAW_MIN_BATCH_COUNT, DRAW_MAX_BATCH_COUNT, COST_DRAW } from '../lib/constants.js';
+import {
+  DRAW_MAX_IMAGES, DRAW_MIN_BATCH_COUNT, DRAW_MAX_BATCH_COUNT, COST_DRAW,
+  DRAW_REFERENCE_TOTAL_BYTES_LIMIT,
+} from '../lib/constants.js';
+import { getRefImages } from '../lib/ref-image-store.js';
+import { recompressImages } from '../lib/image-utils.js';
 
 /**
  * 制图任务提交、执行、轮询恢复（从 useDrawActions 拆分）
@@ -24,7 +29,6 @@ export function useDrawExecution({
   drawPrompt,
   drawPendingImages,
   drawImageCount,
-  drawRefUploadsRef,
   updateDrawConversation,
   enforceDrawLimit,
   refreshDrawConversationMessages,
@@ -73,9 +77,15 @@ export function useDrawExecution({
     }
     const now = Date.now();
     const batchId = createId();
+    // 消息仅存轻量元数据 referenceMeta（refId + name），data URL 已写入本地 ref-image-store，
+    // 避免大体积 base64 进入 Redis 任务记录；referenceImageCount 保留作为兼容字段。
+    const referenceMetaArray = (Array.isArray(drawPendingImages) ? drawPendingImages : [])
+      .filter((img) => img.uploadState !== 'failed' && img.refId)
+      .map((img) => ({ refId: img.refId, name: img.name }));
     const userMessage = {
       id: createId(), role: 'user', content: prompt,
-      referenceImages: referenceImages.length > 0 ? referenceImages : null,
+      referenceMeta: referenceMetaArray.length > 0 ? referenceMetaArray : null,
+      referenceImageCount: referenceMetaArray.length,
       model, size, quality, batchId, imageCount: requestedCount, createdAt: now,
     };
     const assistantMessages = Array.from({ length: requestedCount }, (_, index) => ({
@@ -88,14 +98,7 @@ export function useDrawExecution({
       messages: [...(conv.messages || []), userMessage, ...assistantMessages],
     }));
     setDrawPrompt('');
-    // 释放仍在上传中/失败的本地 object URL，避免内存泄漏（已成功的 url 已是 http blobUrl，不会被误释放）
-    for (const record of (drawRefUploadsRef?.current?.values() || [])) {
-      if (typeof record?.url === 'string' && record.url.startsWith('blob:')) {
-        URL.revokeObjectURL(record.url);
-      }
-    }
     setDrawPendingImages([]);
-    drawRefUploadsRef?.current?.clear();
     const activeConv = drawConversationsRef.current.find((c) => c.id === targetConvId);
     const batchController = new AbortController();
     const taskIdToMessageId = new Map();
@@ -193,35 +196,59 @@ export function useDrawExecution({
         activeDrawTaskIdsRef.current.delete(taskId);
       }
     }
-  }, [authState, balance, drawImageCount, settings, markCloudDirty, updateDrawConversation, enforceDrawLimit, setErrorText, setStatusText, setRechargeDialogOpen, setBalance]);
+  }, [authState, balance, drawImageCount, drawPendingImages, settings, markCloudDirty, updateDrawConversation, enforceDrawLimit, setErrorText, setStatusText, setRechargeDialogOpen, setBalance]);
 
   const handleDraw = useCallback(async () => {
     const prompt = drawPrompt.trim();
     if (!prompt || drawSubmissionRef.current || drawConvLoading || !activeDrawConversation?.messagesLoaded || authState !== 'authenticated') return;
 
-    // 参考图压缩后直接用 base64 data URL。仍在压缩中的图需 await 完成后从 ref 读取最终 data URL。
-    const processingPromises = drawPendingImages
-      .filter((img) => img.uploadState === 'processing')
-      .map((img) => drawRefUploadsRef?.current?.get(img.localUrl)?.promise)
-      .filter(Boolean);
-    if (processingPromises.length > 0) {
-      setStatusText(`正在处理参考图 ${processingPromises.length} 张...`);
-      await Promise.all(processingPromises);
+    const pendingList = Array.isArray(drawPendingImages) ? drawPendingImages : [];
+    // 参考图压缩为异步任务，若仍有 processing 项直接提示稍候再发送（不再 await 压缩 promise）
+    const processingCount = pendingList.filter((img) => img.uploadState === 'processing').length;
+    if (processingCount > 0) {
+      setStatusText(`参考图处理中 ${processingCount} 张，请稍候...`);
+      return;
     }
 
-    // 从 ref 读取最终 data URL（绕过闭包旧值），跳过失败项
-    const referenceImages = drawPendingImages
-      .map((img) => {
-        const record = drawRefUploadsRef?.current?.get(img.localUrl);
-        if (record?.status === 'failed') return null;
-        // 优先取 ref 中压缩完成的 data URL，回退到 img.url（已 done 时已是 data URL）
-        return record?.url || (img.url && img.url.startsWith('data:') ? img.url : null);
-      })
-      .filter(Boolean);
-    const failedRefCount = drawPendingImages.filter((img) =>
-      drawRefUploadsRef?.current?.get(img.localUrl)?.status === 'failed').length;
-    if (failedRefCount > 0) {
-      setErrorText(`${failedRefCount} 张参考图处理失败已跳过，将使用其余参考图生成。`);
+    // 可发送项：跳过选图阶段失败的项，且必须保留原始 file 引用（无 file 的项无法重压）
+    const readyItems = pendingList.filter((img) => img.uploadState !== 'failed' && img.file);
+
+    let referenceImages = [];
+    let recompressFailedCount = 0;
+    if (readyItems.length > 1) {
+      // 多图：按最终图片数量动态重压（单张质量档位随数量降低、总量守恒不超 Redis 0.75MB）
+      setStatusText('正在按图片数量调整参考图质量...');
+      const recompressed = await recompressImages(
+        readyItems.map((img) => ({ file: img.file, name: img.name })),
+        readyItems.length,
+        'draw',
+      );
+      // 仅保留重压成功（url 非空）的项，保持原顺序；失败项计数用于提示
+      referenceImages = recompressed.filter((item) => item.url).map((item) => item.url);
+      recompressFailedCount = recompressed.length - referenceImages.length;
+    } else if (readyItems.length === 1) {
+      // 单图（count === 1）：选图阶段已按"1 张档"最高质量压缩，直接使用已有 data URL，无需重压
+      referenceImages = readyItems
+        .map((img) => img.url)
+        .filter((url) => typeof url === 'string' && url.startsWith('data:'));
+    }
+
+    // 总量校验：data URL 的 base64 长度总和不能超过限制，避免撑爆后端 Redis 任务记录（0.75MB）
+    const totalRefBytes = referenceImages.reduce((sum, url) => sum + url.length, 0);
+    if (totalRefBytes > DRAW_REFERENCE_TOTAL_BYTES_LIMIT) {
+      setErrorText('参考图体积过大，请减少张数或更换图片。');
+      return;
+    }
+
+    // 重压失败项：提示已跳过，不阻断发送；若全部失败 referenceImages 为空数组，沿用现有行为照常发送
+    if (recompressFailedCount > 0) {
+      setErrorText(`${recompressFailedCount} 张参考图压缩调整失败已跳过，将使用其余参考图生成。`);
+    }
+
+    // 选图阶段压缩失败的项提示已跳过，仍使用其余参考图生成
+    const failedCount = pendingList.filter((img) => img.uploadState === 'failed').length;
+    if (failedCount > 0) {
+      setErrorText(`${failedCount} 张参考图处理失败已跳过，将使用其余参考图生成。`);
     }
 
     const imageCount = Math.min(DRAW_MAX_BATCH_COUNT, Math.max(DRAW_MIN_BATCH_COUNT, Number(settings.drawImageCount) || 1));
@@ -233,16 +260,30 @@ export function useDrawExecution({
       quality: settings.drawQuality || 'medium',
       imageCount,
     });
-  }, [drawPrompt, drawConvLoading, activeDrawConversation, authState, drawPendingImages, settings, activeDrawConversationId, _executeDraw, drawRefUploadsRef, setStatusText, setErrorText]);
+  }, [drawPrompt, drawConvLoading, activeDrawConversation, authState, drawPendingImages, settings, activeDrawConversationId, _executeDraw, setStatusText, setErrorText]);
 
   const retryDraw = useCallback(async (userMessageId) => {
     const conv = drawConversationsRef.current.find((c) => c.id === activeDrawConversationId);
     if (!conv || !conv.messages) return;
     const userMsg = conv.messages.find((m) => m.id === userMessageId);
     if (!userMsg) return;
-    const referenceImages = Array.isArray(userMsg.referenceImages) && userMsg.referenceImages.length > 0
-      ? userMsg.referenceImages
-      : userMsg.referenceImage ? [userMsg.referenceImage] : [];
+    let referenceImages = [];
+    // 新数据：从 referenceMeta（refId 列表）恢复本地 ref-image-store 中的 data URL；
+    // 若本地无图（已清理/换设备），仅用取到的图重试并提示。
+    if (Array.isArray(userMsg.referenceMeta) && userMsg.referenceMeta.length > 0) {
+      const metaList = userMsg.referenceMeta.filter((meta) => meta?.refId);
+      const records = await getRefImages(metaList.map((meta) => meta.refId));
+      referenceImages = records.map((record) => record.dataUrl).filter(Boolean);
+      if (referenceImages.length < metaList.length) {
+        setErrorText('部分原参考图仅当前设备可见且已被清理，已使用剩余参考图重试。');
+      }
+    }
+    // 兼容旧数据：referenceImages（blob URL）/ referenceImage 单图
+    if (referenceImages.length === 0) {
+      referenceImages = Array.isArray(userMsg.referenceImages) && userMsg.referenceImages.length > 0
+        ? userMsg.referenceImages
+        : userMsg.referenceImage ? [userMsg.referenceImage] : [];
+    }
     await _executeDraw({
       prompt: getTextParts(userMsg.content),
       referenceImages,
@@ -252,18 +293,44 @@ export function useDrawExecution({
       quality: userMsg.quality || settings.drawQuality || 'medium',
       imageCount: userMsg.imageCount || 1,
     });
-  }, [activeDrawConversationId, settings, _executeDraw]);
+  }, [activeDrawConversationId, settings, _executeDraw, setErrorText]);
 
-  const editDrawMessage = useCallback((userMessageId) => {
+  const editDrawMessage = useCallback(async (userMessageId) => {
     const conv = drawConversationsRef.current.find((c) => c.id === activeDrawConversationId);
     if (!conv || !conv.messages) return;
     const userMsg = conv.messages.find((m) => m.id === userMessageId);
     if (!userMsg) return;
     setDrawPrompt(getTextParts(userMsg.content));
-    const referenceImages = Array.isArray(userMsg.referenceImages) && userMsg.referenceImages.length > 0
-      ? userMsg.referenceImages
-      : userMsg.referenceImage ? [userMsg.referenceImage] : [];
-    setDrawPendingImages(referenceImages.map((url, i) => ({ name: `参考图${i + 1}`, url })));
+    const restoredItems = [];
+    // 新数据：解析 referenceMeta → 从本地存储恢复为 { refId, name, url: dataUrl, uploadState: 'done' }；
+    // 本地无图的项跳过（数据仅存于当前设备，已被清理或换设备时不可见）。
+    if (Array.isArray(userMsg.referenceMeta) && userMsg.referenceMeta.length > 0) {
+      const metaList = userMsg.referenceMeta.filter((meta) => meta?.refId);
+      const records = await getRefImages(metaList.map((meta) => meta.refId));
+      const recordByRefId = new Map(records.map((record) => [record.refId, record]));
+      metaList.forEach((meta, index) => {
+        const record = recordByRefId.get(meta.refId);
+        if (record) {
+          restoredItems.push({
+            refId: meta.refId,
+            name: meta.name || `参考图${index + 1}`,
+            url: record.dataUrl,
+            localUrl: meta.refId,
+            uploadState: 'done',
+          });
+        }
+      });
+    }
+    // 兼容旧数据：referenceImages（blob URL）/ referenceImage 单图
+    if (restoredItems.length === 0) {
+      const referenceImages = Array.isArray(userMsg.referenceImages) && userMsg.referenceImages.length > 0
+        ? userMsg.referenceImages
+        : userMsg.referenceImage ? [userMsg.referenceImage] : [];
+      restoredItems.push(...referenceImages.map((url, i) => ({
+        name: `参考图${i + 1}`, url, localUrl: url, uploadState: 'done',
+      })));
+    }
+    setDrawPendingImages(restoredItems);
   }, [activeDrawConversationId, setDrawPrompt, setDrawPendingImages]);
 
   const downloadImage = useCallback(async (imageUrl, prompt) => {

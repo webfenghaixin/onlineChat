@@ -372,7 +372,6 @@ export default function IndexPage() {
             selectAllDrawAssistantMessages={draw.selectAllDrawAssistantMessages}
             deleteSelectedDrawMessages={draw.deleteSelectedDrawMessages}
             drawFileInputRef={draw.drawFileInputRef}
-            drawRefUploadsRef={draw.drawRefUploadsRef}
             authState={authState} balance={balance}
             onRecharge={() => setRechargeDialogOpen(true)}
             drawConvLoading={draw.drawConvLoading}

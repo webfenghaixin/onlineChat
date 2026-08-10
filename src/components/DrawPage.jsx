@@ -6,6 +6,7 @@ import {
   formatDateTime,
   formatDuration,
   getTextParts,
+  createId,
 } from '../lib/utils';
 import {
   DRAW_SIZE_OPTIONS,
@@ -20,6 +21,7 @@ import {
 import ImagePreview from './ImagePreview';
 import FullscreenEditor, { FullscreenIcon } from './FullscreenEditor';
 import { prepareDrawReferenceImage } from '../lib/image-utils';
+import { saveRefImage, deleteRefImage, getRefImages } from '../lib/ref-image-store';
 import ConfirmDialog from './ConfirmDialog';
 import Scrollbar from './Scrollbar';
 import BalanceBar from './BalanceBar';
@@ -68,7 +70,6 @@ export default function DrawPage({
   selectAllDrawAssistantMessages,
   deleteSelectedDrawMessages,
   drawFileInputRef,
-  drawRefUploadsRef,
   authState,
   balance,
   onRecharge,
@@ -79,6 +80,8 @@ export default function DrawPage({
   const [previewImages, setPreviewImages] = useState(null);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  // 历史消息 referenceMeta 从本地 ref-image-store 恢复出的 data URL 缓存（refId -> dataUrl）
+  const [refImageCache, setRefImageCache] = useState({});
 
   const generatedDrawGallery = useMemo(
     () => activeDrawMessages
@@ -125,16 +128,20 @@ export default function DrawPage({
     setDrawPendingImages((prev) => {
       const target = (prev || [])[index];
       if (target) {
-        // 释放临时 object URL（压缩完成后 localUrl 已是 data URL，不会被误释放）
-        if (target.localUrl && target.localUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(target.localUrl);
+        // 释放仍在使用中的临时 object URL（processing 阶段 url 是 object URL）
+        if (target.url && target.url.startsWith('blob:')) {
+          URL.revokeObjectURL(target.url);
+        }
+        // 移除时同步删除本地存储中的参考图（仅本地删除，不影响已发送消息）
+        if (target.refId) {
+          void deleteRefImage(target.refId);
         }
       }
       return (prev || []).filter((_, itemIndex) => itemIndex !== index);
     });
   }, [setDrawPendingImages]);
 
-  const processDrawReferenceFiles = useCallback(async (files) => {
+  const processDrawReferenceFiles = useCallback((files) => {
     const normalizedFiles = Array.from(files || []);
     if (normalizedFiles.length === 0) return;
 
@@ -158,44 +165,43 @@ export default function DrawPage({
       setErrorText('');
     }
 
-    // 参考图不再上传后台，压缩后直接用 base64 data URL：
-    // 1. 先用 object URL 占位立即显示，不阻塞 UI；
-    // 2. 后台压缩为 data URL，完成后替换 url 并释放 object URL；
-    // 3. 发送时从 drawRefUploadsRef 读最终 data URL（绕过闭包），await 压缩 promise。
+    // 参考图压缩后写入本地 IndexedDB（ref-image-store），消息仅存轻量元数据 referenceMeta：
+    // 1. 每张图生成 refId，先用 object URL 占位立即显示，不阻塞 UI、不禁用上传按钮；
+    // 2. 后台按"1 张档"（最高质量档）压缩为 data URL → 写入本地存储 → 更新项为 done（localUrl 保持为 refId 稳定标识）；
+    //    选图阶段固定用最高质量档，发送时再按最终图片数量动态重压（多图逐张降档、总量守恒）；
+    // 3. item 保留原始 file 引用，仅用于发送阶段重压，不参与渲染；
+    // 4. 若该项已被用户移除（按 refId 检查），压缩完成后跳过 setState 但仍写入存储，避免竞态丢图。
     for (const file of filesToProcess) {
+      const refId = createId();
       const objectUrl = URL.createObjectURL(file);
       const item = {
+        refId,
         name: file.name || `clipboard-image-${Date.now()}`,
+        file,
         url: objectUrl,
-        localUrl: objectUrl,
+        localUrl: refId,
         uploadState: 'processing',
       };
       setDrawPendingImages((prev) => [...(prev || []), item]);
 
-      const promise = prepareDrawReferenceImage(file)
-        .then((dataUrl) => {
+      void prepareDrawReferenceImage(file, 1)
+        .then(async (dataUrl) => {
+          // 先写入本地存储（即使该项已被移除也写入），再尝试更新界面状态
+          await saveRefImage(refId, { name: item.name, dataUrl });
           setDrawPendingImages((prev) => prev.map((im) =>
-            im.localUrl === objectUrl ? { ...im, url: dataUrl, uploadState: 'done' } : im,
+            im.refId === refId ? { ...im, url: dataUrl, uploadState: 'done' } : im,
           ));
-          const record = drawRefUploadsRef?.current?.get(objectUrl);
-          if (record) { record.status = 'done'; record.url = dataUrl; }
           URL.revokeObjectURL(objectUrl);
-          return dataUrl;
         })
         .catch((error) => {
           setDrawPendingImages((prev) => prev.map((im) =>
-            im.localUrl === objectUrl ? { ...im, uploadState: 'failed' } : im,
+            im.refId === refId ? { ...im, uploadState: 'failed' } : im,
           ));
-          const record = drawRefUploadsRef?.current?.get(objectUrl);
-          if (record) record.status = 'failed';
           URL.revokeObjectURL(objectUrl);
           setErrorText(error.message || '参考图处理失败');
-          return null;
         });
-
-      drawRefUploadsRef?.current?.set(objectUrl, { status: 'processing', url: null, promise });
     }
-  }, [drawPendingImages, setDrawPendingImages, setErrorText, drawRefUploadsRef]);
+  }, [drawPendingImages, setDrawPendingImages, setErrorText]);
 
   const handleDrawFileChange = useCallback((event) => {
     const files = Array.from(event.target.files || []);
@@ -466,6 +472,38 @@ export default function DrawPage({
     return () => window.clearInterval(timer);
   }, [hasPendingDrawTask, isGenerating]);
 
+  // 历史消息渲染：遍历所有 user 消息的 referenceMeta，把 refId 合并去重后批量从本地存储恢复，
+  // 结果缓存到 refImageCache（refId -> dataUrl），渲染时按 refId 取图。
+  // 消息加载是异步的（loadDrawConversationMessages），activeDrawMessages 变化后本 effect 会重新执行。
+  useEffect(() => {
+    let cancelled = false;
+    const refIds = [];
+    const seen = new Set();
+    for (const message of activeDrawMessages) {
+      if (message.role !== 'user' || !Array.isArray(message.referenceMeta)) continue;
+      for (const meta of message.referenceMeta) {
+        if (meta?.refId && !seen.has(meta.refId)) {
+          seen.add(meta.refId);
+          refIds.push(meta.refId);
+        }
+      }
+    }
+    if (refIds.length === 0) return undefined;
+    void getRefImages(refIds)
+      .then((records) => {
+        if (cancelled) return;
+        setRefImageCache((prev) => {
+          const next = { ...prev };
+          for (const record of records) {
+            if (record?.refId && record.dataUrl) next[record.refId] = record.dataUrl;
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeDrawMessages]);
+
   async function handleCopy(msg) {
     try {
       const textToCopy = msg.role === 'user'
@@ -719,6 +757,35 @@ export default function DrawPage({
                             ? msg.referenceImages
                             : msg.referenceImage ? [msg.referenceImage] : [];
                           if (refImgs.length === 0) {
+                            // 新数据：referenceMeta 从本地存储恢复，有图则渲染缩略图，无图则显示数量占位
+                            const metaList = Array.isArray(msg.referenceMeta)
+                              ? msg.referenceMeta.filter((meta) => meta?.refId)
+                              : [];
+                            if (metaList.length > 0) {
+                              const cacheUrls = metaList
+                                .map((meta) => refImageCache[meta.refId])
+                                .filter((url) => typeof url === 'string');
+                              if (cacheUrls.length > 0) {
+                                return (
+                                  <div className="draw-ref-images">
+                                    {cacheUrls.map((url, i) => (
+                                      <img
+                                        key={metaList[i].refId}
+                                        className="draw-ref-image draw-ref-image-clickable"
+                                        src={url}
+                                        alt={`参考图 ${i + 1}`}
+                                        onClick={() => openPreview(cacheUrls, i)}
+                                      />
+                                    ))}
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div className="draw-ref-images draw-ref-images-placeholder">
+                                  <span className="draw-ref-placeholder">参考图 {metaList.length} 张</span>
+                                </div>
+                              );
+                            }
                             // 历史消息参考图 data URL 未持久化，只存了数量，显示占位
                             const histCount = Number(msg.referenceImageCount) || 0;
                             if (histCount > 0) {
@@ -756,7 +823,11 @@ export default function DrawPage({
                           {(() => {
                             const refCount = Array.isArray(msg.referenceImages) && msg.referenceImages.length > 0
                               ? msg.referenceImages.length
-                              : msg.referenceImage ? 1 : (Number(msg.referenceImageCount) || 0);
+                              : msg.referenceImage
+                                ? 1
+                                : Array.isArray(msg.referenceMeta) && msg.referenceMeta.length > 0
+                                  ? msg.referenceMeta.length
+                                  : (Number(msg.referenceImageCount) || 0);
                             return refCount > 0 ? ` · 图生图${refCount > 1 ? `(${refCount}张)` : ''}` : '';
                           })()}
                         </span>

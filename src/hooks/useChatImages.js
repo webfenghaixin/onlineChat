@@ -51,8 +51,10 @@ export function useChatImages({
     try {
       const results = await Promise.all(
         filesToProcess.map(async (file) => {
-          const optimizedUrl = await prepareChatImage(file);
-          return { name: file.name || `clipboard-image-${Date.now()}`, url: optimizedUrl };
+          // 选图阶段按 1 张档位（最高质量）压缩；发送时若最终多图会按实际数量重新压缩
+          const optimizedUrl = await prepareChatImage(file, 1);
+          // 保留原始 file 引用，供发送阶段按最终数量重新压缩使用
+          return { name: file.name || `clipboard-image-${Date.now()}`, url: optimizedUrl, file };
         }),
       );
       setPendingImages((prev) => [...prev, ...results]);

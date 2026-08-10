@@ -12,22 +12,31 @@ export function resolveApiUrl(path) {
 export const STORAGE_KEY = 'online-chat-h5-state-v7';
 export const VITE_INVITE_CODE = import.meta.env.VITE_INVITE_CODE || '';
 export const MAX_COMPOSER_HEIGHT = 140;
-export const DRAW_REFERENCE_MAX_DIMENSION = 1280;
-// base64 data URL 直传后端存入 Redis task（临时 24h），需控制总体积 < 1MB。
-// 单张 0.1MB → base64 ≈ 0.13MB，7 张 ≈ 0.93MB，留余量给 task 其他字段。
-export const DRAW_REFERENCE_MAX_BYTES = 0.1 * 1024 * 1024;
+// 常规档压缩仍过大时降级到 640px 再压一次
+export const DRAW_REFERENCE_FALLBACK_MAX_DIMENSION = 640;
+// 制图参考图：压缩后 data URL 写入本地 IndexedDB（ref-image-store），消息仅存轻量元数据。
+// 发送任务时 data URL 仅进入 task.options（Redis 临时 24h），需控制 base64 总量 < 0.75MB。
+// 动态分配规则：1 张最高质量，数量越多单张压缩尺寸与体积越小，总量守恒不超安全线。
+// 单张体积上限 = min(1 张档上限, 总量预算 / 张数 / 1.4)，1.4 为 base64 膨胀预留余量；
+// 单张尺寸按数量阶梯递减（index = count - 1，count 超过 5 取最后档）。
+export const DRAW_REFERENCE_TIER_1_MAX_BYTES = 0.4 * 1024 * 1024;
+export const DRAW_REFERENCE_DIM_TIERS = [1792, 1536, 1280, 1024, 1024];
 export const DRAW_REFERENCE_MIN_QUALITY = 0.5;
-export const DRAW_MAX_REFERENCE_IMAGES = 7;
+export const DRAW_REFERENCE_TOTAL_BYTES_LIMIT = 0.75 * 1024 * 1024;
+export const DRAW_MAX_REFERENCE_IMAGES = 5;
 export const DRAW_MIN_BATCH_COUNT = 1;
 export const DRAW_MAX_BATCH_COUNT = 20;
 
 // 聊天页面上传图片的压缩参数
 // Vercel Serverless Function 请求体上限 4.5MB，base64 编码会膨胀约 33%，
-// 7 张图片各压到 0.4MB 以内，加上对话历史等 payload，总请求体控制在 4.5MB 以内
-export const CHAT_IMAGE_MAX_DIMENSION = 1024;
-export const CHAT_IMAGE_MAX_BYTES = 0.4 * 1024 * 1024;
+// base64 总量预算 3.5MB（CHAT_IMAGE_TOTAL_BYTES_LIMIT），加上对话历史等 payload，总请求体远低于 4.5MB。
+// 动态分配规则：1 张最高质量，数量越多单张压缩尺寸与体积越小，总量守恒不超安全线。
+// 单张体积上限 = min(1 张档上限, 总量预算 / 张数 / 1.4)；单张尺寸按数量阶梯递减（index = count - 1）。
+export const CHAT_IMAGE_TIER_1_MAX_BYTES = 0.8 * 1024 * 1024;
+export const CHAT_IMAGE_DIM_TIERS = [1536, 1280, 1024, 1024, 1024];
+export const CHAT_IMAGE_TOTAL_BYTES_LIMIT = 3.5 * 1024 * 1024;
 export const CHAT_IMAGE_MIN_QUALITY = 0.45;
-export const CHAT_MAX_IMAGES = 7;
+export const CHAT_MAX_IMAGES = 5;
 // 解除制图历史照片上限（原 100 张），保留 enforceDrawLimit 逻辑备用，设为极大值即不触发
 export const DRAW_MAX_IMAGES = 100000;
 

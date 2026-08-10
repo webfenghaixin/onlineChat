@@ -113,15 +113,22 @@ export function normalizeTaskMetadata(metadata, taskId) {
 
   if (!conversationId || !userMessage?.id || !assistantMessage?.id) return null;
 
-  // 参考图改为 base64 data URL 直传，体积大，不存入 Redis 会话历史（Upstash 1MB 限制）。
-  // conversation 只存数量占位，task.options 保留 data URL 供 runDrawRequest 发给模型。
-  const refCount = Array.isArray(userMessage.referenceImages) ? userMessage.referenceImages.length : 0;
+  // 参考图重构：data URL 不再存入 Redis 会话历史（Upstash 1MB 限制），只进 task.options 供大模型使用。
+  // conversation 只存轻量元数据 referenceMeta（refId + name），供前端按 refId 从本地 IndexedDB 回显参考图。
+  const referenceMeta = Array.isArray(userMessage.referenceMeta)
+    ? userMessage.referenceMeta
+      .filter((item) => item && typeof item.refId === 'string')
+      .map((item) => ({ refId: item.refId, name: String(item.name || '') }))
+      .slice(0, 5)
+    : null;
   const slimUserMessage = {
     id: userMessage.id,
     role: userMessage.role,
     content: userMessage.content,
     referenceImages: null,
-    referenceImageCount: refCount,
+    // 空数组统一置 null，避免在会话历史中存空数组
+    referenceMeta: referenceMeta && referenceMeta.length > 0 ? referenceMeta : null,
+    referenceImageCount: referenceMeta ? referenceMeta.length : 0,
     model: userMessage.model,
     size: userMessage.size,
     quality: userMessage.quality,

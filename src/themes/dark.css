@@ -1,0 +1,38 @@
+/* 暗黑主题（Dark）- 深色风格 */
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* 文字色 */
+  --ink: #e8e8ec;
+  --muted: #a0a0aa;
+  --quiet: #6b6b76;
+
+  /* 线条/边框 */
+  --line: rgba(255, 255, 255, 0.08);
+
+  /* 品牌色 */
+  --brand: #38e8d9;
+  --brand-hover: #5ff0e4;
+  --brand-active: #20c9bb;
+  --brand-strong: #38e8d9;
+  --brand-bg: rgba(56, 232, 217, 0.1);
+
+  /* 功能色 */
+  --accent: #ffcf3d;
+  --danger: #ff5c5c;
+
+  /* 组件色 */
+  --assistant: #1e1e22;
+
+  /* 阴影 */
+  --shadow-soft: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-tight: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+  /* 背景 */
+  --bg-color: #e8e8ec;
+  --bg-base:
+    radial-gradient(circle at 14% 18%, rgba(56, 232, 217, 0.06), transparent 20%),
+    radial-gradient(circle at 84% 12%, rgba(99, 102, 241, 0.05), transparent 24%),
+    linear-gradient(180deg, #0d0d0f 0%, #161618 100%);
+}

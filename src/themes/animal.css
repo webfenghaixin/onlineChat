@@ -1,0 +1,39 @@
+/* 动森主题（Animal Crossing）- 默认主题 */
+
+:root,
+[data-theme="animal"] {
+  color-scheme: light;
+
+  /* 文字色 */
+  --ink: #794f27;
+  --muted: #725d42;
+  --quiet: #9f927d;
+
+  /* 线条/边框 */
+  --line: rgba(159, 146, 125, 0.24);
+
+  /* 品牌色 */
+  --brand: #19c8b9;
+  --brand-hover: #3dd4c6;
+  --brand-active: #11a89b;
+  --brand-strong: #11a89b;
+  --brand-bg: #e6f9f6;
+
+  /* 功能色 */
+  --accent: #f5c31c;
+  --danger: #e05a5a;
+
+  /* 组件色 */
+  --assistant: rgb(247, 243, 223);
+
+  /* 阴影 */
+  --shadow-soft: 0 8px 24px rgba(61, 52, 40, 0.14);
+  --shadow-tight: 0 3px 10px rgba(61, 52, 40, 0.1);
+
+  /* 背景 */
+  --bg-color: #725d42;
+  --bg-base:
+    radial-gradient(circle at 14% 18%, rgba(255, 246, 196, 0.74), transparent 20%),
+    radial-gradient(circle at 84% 12%, rgba(130, 213, 187, 0.5), transparent 24%),
+    linear-gradient(180deg, #f4f1d8 0%, #eef6e7 44%, #f8f8f0 100%);
+}

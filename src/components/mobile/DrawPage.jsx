@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Card, Collapse, Select, Divider, Loading, Tabs } from 'animal-island-ui';
+import { Button, Card, Collapse, Divider, Icon, Loading, Tabs } from 'animal-island-ui';
+import item001 from 'animal-island-ui/items/item-001.png';
+import PortaledSelect from '../shared/PortaledSelect';
 import {
   classNames,
   formatTime,
@@ -7,25 +9,25 @@ import {
   formatDuration,
   getTextParts,
   createId,
-} from '../lib/utils';
+} from '../../lib/utils';
 import {
   DRAW_SIZE_OPTIONS,
   DRAW_QUALITY_OPTIONS,
-  DRAW_API_MODE_OPTIONS,
   DRAW_MODEL_OPTIONS,
+  DRAW_STYLE_OPTIONS,
   DRAW_MAX_IMAGES,
   DRAW_MAX_REFERENCE_IMAGES,
   DRAW_MIN_BATCH_COUNT,
   DRAW_MAX_BATCH_COUNT,
-} from '../lib/constants';
-import ImagePreview from './ImagePreview';
-import FullscreenEditor, { FullscreenIcon } from './FullscreenEditor';
-import { prepareDrawReferenceImage } from '../lib/image-utils';
-import { saveRefImage, deleteRefImage, getRefImages } from '../lib/ref-image-store';
-import ConfirmDialog from './ConfirmDialog';
-import Scrollbar from './Scrollbar';
+} from '../../lib/constants';
+import ImagePreview from '../shared/ImagePreview';
+import FullscreenEditor, { FullscreenIcon } from '../shared/FullscreenEditor';
+import { prepareDrawReferenceImage } from '../../lib/image-utils';
+import { saveRefImage, deleteRefImage, getRefImages } from '../../lib/ref-image-store';
+import ConfirmDialog from '../shared/ConfirmDialog';
+import Scrollbar from '../shared/Scrollbar';
 import BalanceBar from './BalanceBar';
-import { COST_DRAW } from '../lib/constants';
+import { COST_DRAW } from '../../lib/constants';
 
 export default function DrawPage({
   settings,
@@ -519,7 +521,7 @@ export default function DrawPage({
 
   const currentModelLabel = (() => {
     const opt = DRAW_MODEL_OPTIONS.find((o) => o.value === (settings.drawModel || 'gpt-image-2'));
-    return opt?.disabled ? 'GPT-Image-2' : (opt?.label || 'GPT-Image-2');
+    return opt?.disabled ? 'light-image-2' : (opt?.label || 'light-image-2');
   })();
   const currentSizeLabel =
     DRAW_SIZE_OPTIONS.find((opt) => opt.value === (settings.drawSize || '1024x1792'))?.label || '9:16 全屏';
@@ -577,7 +579,7 @@ export default function DrawPage({
     <div className="drawer-tab-content drawer-settings-form">
       <div className="drawer-field">
         <span className="drawer-field-label">字体大小</span>
-        <Select
+        <PortaledSelect
           value={settings.fontSize}
           onChange={(value) =>
             setSettings((current) => ({ ...current, fontSize: value }))
@@ -709,13 +711,8 @@ export default function DrawPage({
             {!drawConvLoading && activeDrawConversation?.messages.length === 0 && !isGenerating && (
               <div className="draw-empty">
                 <Card className="draw-empty-card" type="dashed" color="app-yellow">
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M12 19l7-7 3 3-7 7-3-3z" />
-                    <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
-                    <path d="M2 2l7.586 7.586" />
-                    <circle cx="11" cy="11" r="2" />
-                  </svg>
-                  <p>输入描述，AI 为你生成图片</p>
+                  <Icon src={item001} size={48} bounce />
+                  <p>绘你所想，自由无限</p>
                 </Card>
               </div>
             )}
@@ -813,7 +810,7 @@ export default function DrawPage({
                         })()}
                         {getTextParts(msg.content)}
                         <span className="draw-msg-config">
-                          {DRAW_MODEL_OPTIONS.find((o) => o.value === msg.model)?.label || msg.model || 'GPT-Image-2'}
+                          {DRAW_MODEL_OPTIONS.find((o) => o.value === msg.model)?.label || msg.model || 'light-image-2'}
                           {' · '}
                           {DRAW_SIZE_OPTIONS.find((o) => o.value === msg.size)?.label || msg.size}
                           {' · '}
@@ -1122,7 +1119,7 @@ export default function DrawPage({
                     <div className="draw-config">
                       <div className="draw-config-item draw-config-item-model">
                         <span>模型</span>
-                        <Select
+                        <PortaledSelect
                           value={(() => {
                             const current = settings.drawModel || 'gpt-image-2';
                             const opt = DRAW_MODEL_OPTIONS.find((o) => o.value === current);
@@ -1137,16 +1134,16 @@ export default function DrawPage({
                         />
                       </div>
                       <div className="draw-config-item">
-                        <span>模式</span>
-                        <Select
-                          value={settings.drawApiMode || 'images'}
-                          onChange={(value) => setSettings((s) => ({ ...s, drawApiMode: value }))}
-                          options={DRAW_API_MODE_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
+                        <span>风格</span>
+                        <PortaledSelect
+                          value={settings.drawStyle || ''}
+                          onChange={(value) => setSettings((s) => ({ ...s, drawStyle: value }))}
+                          options={DRAW_STYLE_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
                         />
                       </div>
                       <div className="draw-config-item">
                         <span>尺寸</span>
-                        <Select
+                        <PortaledSelect
                           value={settings.drawSize || '1024x1792'}
                           onChange={(value) => setSettings((s) => ({ ...s, drawSize: value }))}
                           options={DRAW_SIZE_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
@@ -1154,7 +1151,7 @@ export default function DrawPage({
                       </div>
                       <div className="draw-config-item">
                         <span>质量</span>
-                        <Select
+                        <PortaledSelect
                           value={settings.drawQuality || 'medium'}
                           onChange={(value) => setSettings((s) => ({ ...s, drawQuality: value }))}
                           options={DRAW_QUALITY_OPTIONS.map((opt) => ({ key: opt.value, label: opt.label }))}
@@ -1162,7 +1159,7 @@ export default function DrawPage({
                       </div>
                       <div className="draw-config-item">
                         <span>数量</span>
-                        <Select
+                        <PortaledSelect
                           value={String(currentImageCount)}
                           onChange={(value) => setSettings((s) => ({ ...s, drawImageCount: Number(value) || 1 }))}
                           options={drawCountOptions}
@@ -1207,7 +1204,7 @@ export default function DrawPage({
                   </svg>
                 </button>
                 <Button
-                  className="upload-button"
+                  className="draw-upload-button"
                   type="default"
                   size="small"
                   onClick={() => drawFileInputRef.current?.click()}
@@ -1221,18 +1218,6 @@ export default function DrawPage({
                     <polyline points="21 15 16 10 5 21" />
                   </svg>
                 </Button>
-                <label className="draw-count-quick" title="生成数量">
-                  <span className="sr-only">生成数量</span>
-                  <select
-                    value={currentImageCount}
-                    onChange={(event) => setSettings((s) => ({ ...s, drawImageCount: Number(event.target.value) || 1 }))}
-                    aria-label="生成图片数量"
-                  >
-                    {drawCountOptions.map((option) => (
-                      <option key={option.key} value={option.key}>{option.label}</option>
-                    ))}
-                  </select>
-                </label>
                 <textarea
                   className="draw-input"
                   rows={1}
@@ -1254,7 +1239,7 @@ export default function DrawPage({
                   disabled={!drawPrompt.trim() || isDrawSubmitting || drawConvLoading || !activeDrawConversation?.messagesLoaded || authState !== 'authenticated'}
                   onClick={handleDraw}
                 >
-                  {isDrawSubmitting ? '提交中' : '生成'}
+                  {isDrawSubmitting ? '提交中' : <><Icon name="icon-camera" size={30} bounce />生成</>}
                 </Button>
               </div>
             </>

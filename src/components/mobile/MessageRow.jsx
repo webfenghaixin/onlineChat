@@ -1,7 +1,7 @@
 import { memo, useState } from 'react';
 import { Button } from 'animal-island-ui';
-import { classNames, formatTime, getImageParts, getTextParts, renderMarkdown } from '../lib/utils';
-import ImagePreview from './ImagePreview';
+import { classNames, formatTime, getImageParts, getTextParts, renderMarkdown } from '../../lib/utils';
+import ImagePreview from '../shared/ImagePreview';
 
 const MessageRow = memo(function MessageRow({
   message,

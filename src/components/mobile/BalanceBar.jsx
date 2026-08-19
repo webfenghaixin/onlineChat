@@ -1,6 +1,6 @@
 import { Button } from 'animal-island-ui';
-import { classNames } from '../lib/utils';
-import { COST_CHAT, COST_DRAW } from '../lib/constants';
+import { classNames } from '../../lib/utils';
+import { COST_CHAT, COST_DRAW } from '../../lib/constants';
 
 /**
  * 顶部余额提醒条。展示当前余额、单次费用、不足时高亮+显示充值按钮。

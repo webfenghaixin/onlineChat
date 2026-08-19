@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Modal, Divider, Title } from 'animal-island-ui';
-import { BALANCE_RECHARGE_PRESETS } from '../lib/constants';
+import { BALANCE_RECHARGE_PRESETS } from '../../lib/constants';
 
 /**
  * 充值弹窗。展示预设金额快捷选择，调 onRecharge(amount)。

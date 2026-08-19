@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Button } from 'animal-island-ui';
-import { MAX_COMPOSER_HEIGHT, CHAT_MAX_IMAGES } from '../lib/constants';
-import ImagePreview from './ImagePreview';
-import FullscreenEditor, { FullscreenIcon } from './FullscreenEditor';
+import { Button, Icon } from 'animal-island-ui';
+import { MAX_COMPOSER_HEIGHT, CHAT_MAX_IMAGES } from '../../lib/constants';
+import ImagePreview from '../shared/ImagePreview';
+import FullscreenEditor, { FullscreenIcon } from '../shared/FullscreenEditor';
 
 export default function Composer({
   draft,
@@ -47,13 +47,13 @@ export default function Composer({
   const pendingImageUrls = Array.isArray(pendingImages) ? pendingImages.map((img) => img.url) : [];
 
   return (
-    <footer className="composer-panel">
+    <footer className="desktop-composer-panel">
       {selectMode ? (
-        <div className="select-action-bar">
-          <Button className="select-action-btn select-action-btn-user" type="default" size="small" onClick={selectAllUserMessages}>全选用户</Button>
-          <Button className="select-action-btn select-action-btn-ai" type="default" size="small" onClick={selectAllAssistantMessages}>全选AI</Button>
+        <div className="desktop-select-action-bar">
+          <Button className="desktop-select-action-btn desktop-select-action-btn-user" type="default" size="small" onClick={selectAllUserMessages}>全选用户</Button>
+          <Button className="desktop-select-action-btn desktop-select-action-btn-ai" type="default" size="small" onClick={selectAllAssistantMessages}>全选AI</Button>
           <Button
-            className="select-action-btn select-action-btn-delete"
+            className="desktop-select-action-btn desktop-select-action-btn-delete"
             type="primary"
             danger
             size="small"
@@ -66,22 +66,22 @@ export default function Composer({
       ) : (
         <>
           {showCompleteHint && !isSending && (
-            <div className="complete-hint">回答完成</div>
+            <div className="desktop-complete-hint">回答完成</div>
           )}
-          {errorText && <div className="error-banner">{errorText}</div>}
+          {errorText && <div className="desktop-error-banner">{errorText}</div>}
 
           {Array.isArray(pendingImages) && pendingImages.length > 0 && (
-            <div className="pending-images-row">
+            <div className="desktop-pending-images-row">
               {pendingImages.map((img, index) => (
-                <div key={index} className="pending-image-card pending-image-card-mini">
+                <div key={index} className="desktop-pending-image-card desktop-pending-image-card-mini">
                   <img
-                    className="pending-image-preview pending-image-clickable"
+                    className="desktop-pending-image-preview desktop-pending-image-clickable"
                     src={img.url}
                     alt={`待发送图片 ${index + 1}`}
                     onClick={() => setPreviewIndex(index)}
                   />
                   <Button
-                    className="pending-image-remove"
+                    className="desktop-pending-image-remove"
                     type="text"
                     size="small"
                     danger
@@ -94,30 +94,18 @@ export default function Composer({
             </div>
           )}
 
-          <div className="composer-box">
+          <div className="desktop-composer-box">
             <button
               type="button"
-              className="composer-fullscreen-button"
+              className="desktop-composer-fullscreen-button"
               onClick={() => setFullscreenOpen(true)}
               aria-label="全屏编辑消息"
               title="全屏编辑消息"
             >
               <FullscreenIcon />
             </button>
-            <button
-              type="button"
-              className="composer-collapse-button"
-              onClick={onCollapse}
-              aria-label="收起输入框"
-              title="收起输入框"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2" y="6" width="20" height="12" rx="2" />
-                <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
-              </svg>
-            </button>
             <Button
-              className="upload-button"
+              className="desktop-upload-btn"
               type="default"
               size="small"
               onClick={handleUploadClick}
@@ -125,7 +113,7 @@ export default function Composer({
               aria-label="上传图片"
             >
               {imageProcessing ? (
-                <span className="upload-button-loading">处理中</span>
+                <span className="desktop-upload-btn-loading">处理中</span>
               ) : (
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
               )}
@@ -133,7 +121,7 @@ export default function Composer({
 
             <textarea
               ref={composerRef}
-              className="composer-input"
+              className="desktop-composer-input"
               rows={1}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
@@ -143,16 +131,16 @@ export default function Composer({
             />
 
             {isSending ? (
-              <Button className="send-button stop-button" type="primary" danger size="small" onClick={stopStreaming}>停止</Button>
+              <Button className="desktop-send-btn desktop-stop-btn" type="primary" danger size="middle" onClick={stopStreaming}>停止</Button>
             ) : (
               <Button
-                className="send-button"
+                className="desktop-send-btn"
                 type="primary"
-                size="small"
+                size="middle"
                 disabled={!canSend || imageProcessing}
                 onClick={() => sendMessage()}
               >
-                发送
+                <Icon name="icon-chat" size={30} bounce />发送
               </Button>
             )}
           </div>
@@ -161,7 +149,7 @@ export default function Composer({
 
       <input
         ref={fileInputRef}
-        className="hidden-input"
+        className="desktop-hidden-input"
         type="file"
         accept="image/*"
         multiple

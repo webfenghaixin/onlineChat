@@ -62,22 +62,22 @@ export const RIGHTCODE_PRICING_OPTIONS = [
 ];
 
 export const MODEL_OPTIONS = [
-  { value: 'gpt-5.6-luna', label: 'GPT-5.6-luna' },
-  { value: 'gpt-5.6-terra', label: 'GPT-5.6-terra' },
-  { value: 'gpt-5.6-sol', label: 'GPT-5.6-sol' },
+  { value: 'gpt-5.6-luna', label: 'light-5.6-luna' },
+  { value: 'gpt-5.6-terra', label: 'light-5.6-terra' },
+  { value: 'gpt-5.6-sol', label: 'light-5.6-sol' },
 ];
 
 export const DRAW_MODEL_OPTIONS = [
-  { value: 'gpt-image-2', label: 'GPT-Image-2' },
-  { value: 'gpt-image-2-vip', label: 'GPT-Image-2-VIP（暂不可用）', disabled: true },
+  { value: 'gpt-image-2', label: 'light-image-2' },
+  { value: 'gpt-image-2-vip', label: 'light-image-2-vip（暂不可用）', disabled: true },
 ];
 
 export const DRAW_SIZE_OPTIONS = [
-  { value: '1024x1024', label: '1:1 方图' },
-  { value: '1024x1536', label: '2:3 竖图' },
-  { value: '1024x1792', label: '9:16 全屏' },
-  { value: '1536x1024', label: '3:2 横图' },
-  { value: '1792x1024', label: '16:9 宽屏' },
+  { value: '1024x1024', label: '1:1 方图 · 正方形（1024×1024）' },
+  { value: '1024x1536', label: '2:3 竖图 · 偏正方形（1024×1536）' },
+  { value: '1024x1792', label: '9:16 长竖图 · 适合手机竖屏（1024×1792）' },
+  { value: '1536x1024', label: '3:2 横图 · 偏正方形（1536×1024）' },
+  { value: '1792x1024', label: '16:9 长横图 · 适合电脑横屏（1792×1024）' },
 ];
 
 export const DRAW_QUALITY_OPTIONS = [
@@ -90,6 +90,16 @@ export const DRAW_QUALITY_OPTIONS = [
 export const DRAW_API_MODE_OPTIONS = [
   { value: 'images', label: 'Images API' },
   { value: 'chat', label: 'Chat API' },
+];
+
+export const DRAW_STYLE_OPTIONS = [
+  { value: '', label: '自动 / 无' },
+  { value: 'photoreal', label: '写实摄影', prompt: 'Photorealistic, high detail, natural lighting' },
+  { value: 'anime', label: '动漫插画', prompt: 'Anime style illustration' },
+  { value: '3d', label: '3D 渲染', prompt: '3D render, octane, soft studio lighting' },
+  { value: 'flat', label: '扁平插画', prompt: 'Flat vector illustration, clean shapes' },
+  { value: 'watercolor', label: '水彩', prompt: 'Watercolor painting style' },
+  { value: 'pixel', label: '像素风', prompt: 'Pixel art style' },
 ];
 
 export const defaultSettings = {
@@ -110,5 +120,6 @@ export const defaultSettings = {
   drawQuality: 'medium',
   drawModel: 'gpt-image-2',
   drawApiMode: 'images',
+  drawStyle: '',
   drawImageCount: 1,
 };

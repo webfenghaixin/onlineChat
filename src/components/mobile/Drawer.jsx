@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Button, Card, Input, Select, Divider, Tabs, Modal } from 'animal-island-ui';
-import { FONT_SIZE_OPTIONS, MODEL_OPTIONS } from '../lib/constants';
-import { formatDateTime, normalizeModelSettings } from '../lib/utils';
-import { changePassword } from '../lib/auth';
+import { Button, Card, Input, Divider, Tabs, Modal } from 'animal-island-ui';
+import PortaledSelect from '../shared/PortaledSelect';
+import { FONT_SIZE_OPTIONS, MODEL_OPTIONS } from '../../lib/constants';
+import { formatDateTime, normalizeModelSettings } from '../../lib/utils';
+import { changePassword } from '../../lib/auth';
 
 export default function Drawer({
   drawerOpen,
@@ -126,7 +127,7 @@ export default function Drawer({
     <div className="drawer-tab-content drawer-settings-form">
       <div className="drawer-field">
         <span className="drawer-field-label">字体大小</span>
-        <Select
+        <PortaledSelect
           value={settings.fontSize}
           onChange={(value) =>
             setSettings((current) => ({ ...current, fontSize: value }))
@@ -137,7 +138,7 @@ export default function Drawer({
 
       <div className="drawer-field">
         <span className="drawer-field-label">模型名称</span>
-        <Select
+        <PortaledSelect
           value={settings.model}
           onChange={(value) =>
             setSettings((current) =>

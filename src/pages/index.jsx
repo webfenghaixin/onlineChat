@@ -8,20 +8,24 @@ import { useScrollCollapse } from '../hooks/useScrollCollapse.js';
 import { useCloudDirty, useCloudSync } from '../hooks/useCloudSync.js';
 import { useChatActions } from '../hooks/useChatActions.js';
 import { useDrawActions } from '../hooks/useDrawActions.js';
+import { useIsDesktop } from '../hooks/useResponsive.js';
+import { applyTheme, getStoredTheme } from '../lib/theme-utils.js';
 
-import AuthLoading from '../components/AuthLoading';
-import Drawer from '../components/Drawer';
-import ChatHeader from '../components/ChatHeader';
-import MessageRow from '../components/MessageRow';
-import Scrollbar from '../components/Scrollbar';
-import Composer from '../components/Composer';
-import ConfirmDialog from '../components/ConfirmDialog';
-import BalanceBar from '../components/BalanceBar';
+import AuthLoading from '../components/shared/AuthLoading';
+import '../styles/mobile.css';
+import Drawer from '../components/mobile/Drawer';
+import ChatHeader from '../components/mobile/ChatHeader';
+import MessageRow from '../components/mobile/MessageRow';
+import Scrollbar from '../components/shared/Scrollbar';
+import Composer from '../components/mobile/Composer';
+import ConfirmDialog from '../components/shared/ConfirmDialog';
+import BalanceBar from '../components/mobile/BalanceBar';
+import DesktopApp from '../components/desktop/index';
 import { Button, Card, Divider, Footer, Loading, Title } from 'animal-island-ui';
 
-const AuthForm = lazy(() => import('../components/AuthForm'));
-const DrawPage = lazy(() => import('../components/DrawPage'));
-const RechargeDialog = lazy(() => import('../components/RechargeDialog'));
+const AuthForm = lazy(() => import('../components/shared/AuthForm'));
+const DrawPage = lazy(() => import('../components/mobile/DrawPage'));
+const RechargeDialog = lazy(() => import('../components/shared/RechargeDialog'));
 
 export default function IndexPage() {
   const loadedState = useMemo(() => loadState(), []);
@@ -33,11 +37,26 @@ export default function IndexPage() {
   const [rechargeLoading, setRechargeLoading] = useState(false);
   const [authState, setAuthState] = useState(() => (getToken() ? 'loading' : 'auth-form'));
   const [authLoadingActive, setAuthLoadingActive] = useState(true);
+
+  // 主题初始化
+  const [theme, setTheme] = useState(() => {
+    const stored = getStoredTheme();
+    return stored;
+  });
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  const handleThemeChange = useCallback((next) => {
+    setTheme(next);
+  }, []);
   const [authTab, setAuthTab] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', inviteCode: '' });
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(() => getStoredUsername());
+  const isDesktop = useIsDesktop();
 
   // 云脏数据追踪（独立 hook，先调用以获取 markCloudDirty，避免循环依赖）
   const cloudDirty = useCloudDirty();
@@ -195,6 +214,45 @@ export default function IndexPage() {
           setCurrentUser={setCurrentUser}
         />
       </Suspense>
+    );
+  }
+
+  if (isDesktop) {
+    return (
+      <DesktopApp
+        authState={authState}
+        authTab={authTab} setAuthTab={setAuthTab}
+        authForm={authForm} setAuthForm={setAuthForm}
+        authError={authError} setAuthError={setAuthError}
+        authLoading={authLoading} setAuthLoading={setAuthLoading}
+        authLoadingActive={authLoadingActive}
+        setAuthState={setAuthState}
+        setAuthLoadingActive={setAuthLoadingActive}
+        setCurrentUser={setCurrentUser}
+        settings={settings} setSettings={setSettings}
+        errorText={errorText} setErrorText={setErrorText}
+        statusText={statusText}
+        balance={balance}
+        rechargeDialogOpen={rechargeDialogOpen} setRechargeDialogOpen={setRechargeDialogOpen}
+        rechargeLoading={rechargeLoading} setRechargeLoading={setRechargeLoading}
+        handleRecharge={handleRecharge}
+        chat={chat}
+        draw={draw}
+        showScrollToBottom={showScrollToBottom}
+        scrollToBottom={scrollToBottom}
+        composerCollapsed={composerCollapsed}
+        composerFabVisible={composerFabVisible}
+        expandComposer={expandComposer}
+        collapseComposer={collapseComposer}
+        composerWrapRef={composerWrapRef}
+        visibleMessages={visibleMessages}
+        hasMoreMessages={hasMoreMessages}
+        draftHasText={draftHasText}
+        canSend={canSend}
+        handleLogout={handleLogout}
+        theme={theme}
+        onThemeChange={handleThemeChange}
+      />
     );
   }
 

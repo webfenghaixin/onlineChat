@@ -687,7 +687,7 @@ async function generateImageViaTaskApi({
   onTaskStart,
   taskMetadata,
 }) {
-  const apiMode = settings.drawApiMode || 'images';
+  const apiMode = 'images'; // 写死 Images API
   const startedAt = Date.now();
   const startResponse = await fetch(resolveDrawTaskUrl(settings, 'start'), {
     method: 'POST',
@@ -964,7 +964,7 @@ export async function generateImage({
   onTaskStart,
   taskMetadata,
 }) {
-  const apiMode = settings.drawApiMode || 'images';
+  const apiMode = 'images'; // 写死 Images API
 
   if (settings.useProxy) {
     return generateImageViaTaskApi({
@@ -1010,7 +1010,7 @@ export async function generateImageBatch({
     method: 'POST',
     headers: getAuthorizedHeaders(),
     body: JSON.stringify({
-      apiMode: settings.drawApiMode || 'images',
+      apiMode: 'images', // 写死 Images API
       source: settings.source || 'rightcode',
       prompt,
       referenceImages: Array.isArray(referenceImages) ? referenceImages : [],

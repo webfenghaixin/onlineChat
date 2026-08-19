@@ -6,7 +6,7 @@ import {
 import { fetchBalance } from '../lib/auth.js';
 import {
   DRAW_MAX_IMAGES, DRAW_MIN_BATCH_COUNT, DRAW_MAX_BATCH_COUNT, COST_DRAW,
-  DRAW_REFERENCE_TOTAL_BYTES_LIMIT,
+  DRAW_REFERENCE_TOTAL_BYTES_LIMIT, DRAW_STYLE_OPTIONS,
 } from '../lib/constants.js';
 import { getRefImages } from '../lib/ref-image-store.js';
 import { recompressImages, recompressDataUrls } from '../lib/image-utils.js';
@@ -204,7 +204,9 @@ export function useDrawExecution({
   }, [authState, balance, drawImageCount, drawPendingImages, settings, markCloudDirty, updateDrawConversation, enforceDrawLimit, setErrorText, setStatusText, setRechargeDialogOpen, setBalance]);
 
   const handleDraw = useCallback(async () => {
-    const prompt = drawPrompt.trim();
+    // 选中的风格提示词拼到用户提示词开头
+    const stylePrompt = DRAW_STYLE_OPTIONS.find((o) => o.value === settings.drawStyle)?.prompt || '';
+    const prompt = (stylePrompt ? `${stylePrompt}, ` : '') + drawPrompt.trim();
     if (!prompt || drawSubmissionRef.current || drawConvLoading || !activeDrawConversation?.messagesLoaded || authState !== 'authenticated') return;
 
     const pendingList = Array.isArray(drawPendingImages) ? drawPendingImages : [];

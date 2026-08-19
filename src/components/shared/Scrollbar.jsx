@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { classNames } from '../lib/utils';
+import { classNames } from '../../lib/utils';
 
 function Scrollbar({ scrollRef }) {
   const [thumbState, setThumbState] = useState({ top: 0, height: 0, visible: false });

@@ -36,4 +36,24 @@
     radial-gradient(circle at 14% 18%, rgba(255, 246, 196, 0.74), transparent 20%),
     radial-gradient(circle at 84% 12%, rgba(130, 213, 187, 0.5), transparent 24%),
     linear-gradient(180deg, #f4f1d8 0%, #eef6e7 44%, #f8f8f0 100%);
+
+  /* 桌面端语义色（与既有硬编码值一致，保证视觉零变化） */
+  --app-bg:
+    radial-gradient(ellipse at 15% 5%, rgba(129, 220, 210, 0.25), transparent 30%),
+    radial-gradient(ellipse at 85% 10%, rgba(216, 130, 57, 0.15), transparent 28%),
+    linear-gradient(180deg, #e8f5e9 0%, #d4edda 30%, #c8e6c9 60%, #b2dfdb 100%);
+  --surface: #f8f8f0;
+  --surface-strong: rgba(255, 255, 255, 0.95);
+  --panel-wash: rgba(255, 255, 255, 0.35);
+  --hover-wash: rgba(255, 255, 255, 0.7);
+  --bubble-ai: rgb(221, 240, 250);
+  --bubble-ai-dot: rgba(80, 170, 230, 0.15);
+  --bubble-ai-dot2: rgba(140, 210, 250, 0.1);
+  --bubble-user: rgb(216, 245, 240);
+  --bubble-user-dot: rgba(60, 190, 170, 0.18);
+  --bubble-user-dot2: rgba(120, 230, 210, 0.12);
+  --bubble-border: rgba(80, 170, 230, 0.3);
+  --brand-wash: rgba(25, 200, 185, 0.1);
+  --brand-wash-strong: rgba(25, 200, 185, 0.2);
+  --scrollbar-thumb: rgba(125, 100, 70, 0.25);
 }

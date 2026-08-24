@@ -4,6 +4,7 @@ export const config = {
 
 import { sendJson, setCorsHeaders, readJsonBody, authenticateNodeRequest } from './start.js';
 import { getLimiter, limitRequest } from '../lib/ratelimit.js';
+import { putPublicImage } from '../lib/cos-storage.js';
 
 // data URL → buffer
 function parseDataUrl(dataUrl) {
@@ -74,28 +75,20 @@ export default async function handler(req, res) {
     return;
   }
 
-  const token = process.env.BLOB_READ_WRITE_TOKEN || '';
-  if (!token) {
-    sendJson(res, 500, { error: '服务端未配置 BLOB_READ_WRITE_TOKEN' });
-    return;
-  }
-
   // username 可能含 @ . 等特殊字符，转成安全路径片段
   const safeUser = String(auth.username || 'u').replace(/[^a-zA-Z0-9_-]/g, '_');
 
   try {
-    const { put } = await import('@vercel/blob');
     const id = crypto.randomUUID();
     const ext = getExt(parsed.contentType);
-    const blob = await put(`draw-ref/${safeUser}/${id}.${ext}`, parsed.buffer, {
-      access: 'public',
-      contentType: parsed.contentType,
-      token,
-      addRandomSuffix: false,
-    });
-    sendJson(res, 200, { url: blob.url });
+    const url = await putPublicImage(
+      `draw-ref/${safeUser}/${id}.${ext}`,
+      parsed.buffer,
+      parsed.contentType,
+    );
+    sendJson(res, 200, { url });
   } catch (error) {
-    console.error('参考图上传到 Vercel Blob 失败:', error);
+    console.error('参考图上传到对象存储失败:', error);
     sendJson(res, 500, { error: '参考图上传失败，请稍后重试。' });
   }
 }

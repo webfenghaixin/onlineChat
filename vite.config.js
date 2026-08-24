@@ -197,6 +197,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: true,
         },
+        '/api/balance': {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: true,
+        },
         '/api/data': {
           target: apiTarget,
           changeOrigin: true,

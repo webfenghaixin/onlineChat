@@ -35,4 +35,24 @@
     radial-gradient(circle at 14% 18%, rgba(56, 232, 217, 0.06), transparent 20%),
     radial-gradient(circle at 84% 12%, rgba(99, 102, 241, 0.05), transparent 24%),
     linear-gradient(180deg, #0d0d0f 0%, #161618 100%);
+
+  /* 桌面端语义色（宝蓝色 + 黑色风格） */
+  --app-bg:
+    radial-gradient(ellipse at 15% 5%, rgba(56, 189, 248, 0.12), transparent 30%),
+    radial-gradient(ellipse at 85% 10%, rgba(59, 130, 246, 0.1), transparent 28%),
+    linear-gradient(180deg, #0a0e1a 0%, #0d1220 35%, #0b0f18 65%, #080a12 100%);
+  --surface: #111827;
+  --surface-strong: rgba(17, 24, 39, 0.95);
+  --panel-wash: rgba(56, 189, 248, 0.06);
+  --hover-wash: rgba(56, 189, 248, 0.12);
+  --bubble-ai: #131c2e;
+  --bubble-ai-dot: rgba(56, 189, 248, 0.08);
+  --bubble-ai-dot2: rgba(99, 102, 241, 0.06);
+  --bubble-user: #10233a;
+  --bubble-user-dot: rgba(56, 232, 217, 0.08);
+  --bubble-user-dot2: rgba(56, 189, 248, 0.06);
+  --bubble-border: rgba(56, 189, 248, 0.28);
+  --brand-wash: rgba(56, 189, 248, 0.12);
+  --brand-wash-strong: rgba(56, 189, 248, 0.22);
+  --scrollbar-thumb: rgba(56, 189, 248, 0.3);
 }

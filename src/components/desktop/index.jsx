@@ -98,7 +98,7 @@ export default function DesktopApp({
             />
 
             <div className="desktop-balance-bar">
-              <span>余额：{balance !== null ? `${balance} 次` : '加载中...'}</span>
+              <span>余额 {balance != null ? `¥${Number(balance).toFixed(2)}` : '加载中...'}<small className="desktop-balance-hint">（聊天 ¥0.05/条 · 制图 ¥0.3/张）</small></span>
               <div className="desktop-balance-actions">
                 <ThemeSwitch theme={theme} onThemeChange={onThemeChange} />
                 <button type="button" className="desktop-recharge-btn" onClick={() => setRechargeDialogOpen(true)}>
@@ -192,7 +192,10 @@ export default function DesktopApp({
                 onClick={expandComposer}
                 aria-label="展开输入框"
               >
-                ↑
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="6" width="20" height="12" rx="2" />
+                  <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
+                </svg>
               </button>
             )}
           </div>

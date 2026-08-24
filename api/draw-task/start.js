@@ -5,6 +5,7 @@ export const config = {
 import { createRedis, getRedisJson, setRedisJson, verifyJWT, chargeUser, refundUser, COST_DRAW, getUserBalance } from '../lib/auth-utils.js';
 import { getLimiter, limitRequest } from '../lib/ratelimit.js';
 import { cleanDrawOptions, runDrawRequest } from '../lib/draw-utils.js';
+import { putPublicImage } from '../lib/cos-storage.js';
 import { waitUntil } from '@vercel/functions';
 
 const CORS_HEADERS = {
@@ -355,11 +356,6 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
 
     if (sourceImageUrl && sourceImageUrl.startsWith('http')) {
       try {
-        const token = process.env.BLOB_READ_WRITE_TOKEN || '';
-        if (!token) {
-          throw new Error('服务端未配置 BLOB_READ_WRITE_TOKEN');
-        }
-
         const imageResponse = await fetch(sourceImageUrl, {
           signal: AbortSignal.timeout(30000),
         });
@@ -372,18 +368,13 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
         const ext = contentType.includes('webp') ? 'webp'
           : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
           : 'png';
-        const { put } = await import('@vercel/blob');
-        const blob = await put(`draw/${task.id}.${ext}`, imageBuffer, {
-          access: 'public',
-          contentType,
-          token,
-          addRandomSuffix: false,
-        });
-        blobUrl = blob.url;
-        persistentImageUrl = blob.url;
+        // 生成图镜像：优先腾讯云 COS，未配置时回退 Vercel Blob
+        const url = await putPublicImage(`draw/${task.id}.${ext}`, imageBuffer, contentType);
+        blobUrl = url;
+        persistentImageUrl = url;
       } catch (uploadError) {
         blobUploadError = uploadError instanceof Error ? uploadError.message : String(uploadError);
-        console.error('Vercel Blob upload failed:', blobUploadError);
+        console.error('对象存储镜像失败:', blobUploadError);
       }
     }
 

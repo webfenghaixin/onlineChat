@@ -3,6 +3,7 @@ export const config = {
 };
 
 import { sendJson, setCorsHeaders, readJsonBody, authenticateNodeRequest } from './start.js';
+import { getLimiter, limitRequest } from '../lib/ratelimit.js';
 
 // data URL → buffer
 function parseDataUrl(dataUrl) {
@@ -37,6 +38,13 @@ export default async function handler(req, res) {
   const auth = await authenticateNodeRequest(req);
   if (auth.error) {
     sendJson(res, auth.error.status, { error: auth.error.message });
+    return;
+  }
+
+  const limiter = getLimiter('draw-upload-ref', 20, '1d');
+  const rateLimit = await limitRequest(limiter, auth.username);
+  if (!rateLimit.ok) {
+    sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
     return;
   }
 

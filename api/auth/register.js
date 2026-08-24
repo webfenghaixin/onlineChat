@@ -3,14 +3,14 @@ export const config = { runtime: 'edge' };
 import {
   jsonResponse,
   handleOptions,
-  hashPassword,
-  generateSalt,
+  hashPasswordV2,
   signJWT,
   createRedis,
   setRedisJsonNx,
   getRedisJson,
   BALANCE_INITIAL,
 } from '../lib/auth-utils.js';
+import { getLimiter, limitRequest, getRequestIp } from '../lib/ratelimit.js';
 
 export default async function handler(request) {
   if (request.method === 'OPTIONS') return handleOptions();
@@ -18,6 +18,12 @@ export default async function handler(request) {
 
   const redis = createRedis();
   if (!redis) return jsonResponse(500, { error: '数据库未配置，请联系管理员' });
+
+  const limiter = getLimiter('register', 3, '1h');
+  const rateLimit = await limitRequest(limiter, getRequestIp(request));
+  if (!rateLimit.ok) {
+    return jsonResponse(429, { error: '操作过于频繁，请稍后再试' });
+  }
 
   let body;
   try {
@@ -43,12 +49,13 @@ export default async function handler(request) {
     return jsonResponse(400, { error: '邀请码不正确' });
   }
 
-  const salt = generateSalt();
-  const passwordHash = await hashPassword(password, salt);
+  const v2 = await hashPasswordV2(password);
   const userKey = `user:${normalizedUsername}`;
   const userRecord = {
-    salt,
-    passwordHash,
+    salt: v2.salt,
+    passwordHash: v2.hash,
+    passwordAlgo: v2.algo,
+    passwordIterations: v2.iterations,
     createdAt: Date.now(),
     balance: BALANCE_INITIAL,
   };
@@ -59,7 +66,7 @@ export default async function handler(request) {
   }
 
   const savedUser = await getRedisJson(redis, userKey);
-  if (!savedUser || savedUser.passwordHash !== passwordHash) {
+  if (!savedUser || savedUser.passwordHash !== v2.hash) {
     return jsonResponse(500, { error: '用户写入数据库失败，请检查 Redis 配置' });
   }
 

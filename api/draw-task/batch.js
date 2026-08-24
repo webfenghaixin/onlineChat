@@ -2,7 +2,8 @@ export const config = {
   maxDuration: 300,
 };
 
-import { createRedis, getUserBalance, COST_DRAW } from '../lib/auth-utils.js';
+import { createRedis, getUserBalance, chargeUser, COST_DRAW } from '../lib/auth-utils.js';
+import { getLimiter, limitRequest } from '../lib/ratelimit.js';
 import { cleanDrawOptions } from '../lib/draw-utils.js';
 import { waitUntil } from '@vercel/functions';
 import {
@@ -40,6 +41,13 @@ export default async function handler(req, res) {
   const auth = await authenticateNodeRequest(req);
   if (auth.error) {
     sendJson(res, auth.error.status, { error: auth.error.message });
+    return;
+  }
+
+  const limiter = getLimiter('draw-batch', 10, '1m');
+  const rateLimit = await limitRequest(limiter, auth.username);
+  if (!rateLimit.ok) {
+    sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
     return;
   }
 
@@ -171,10 +179,31 @@ export default async function handler(req, res) {
     taskRecords.map(({ task }) => task.metadata.assistantMessage),
   );
 
+  // 整批预扣费：任务已入队，扣费失败则整批标记 failed，不启动后台任务
+  const charge = await chargeUser(redis, auth.username, totalCost);
+  if (!charge.ok) {
+    for (const { task, taskKey } of taskRecords) {
+      await setTask(redis, taskKey, {
+        ...task,
+        status: 'failed',
+        error: '余额不足，任务未执行',
+        updatedAt: Date.now(),
+        completedAt: Date.now(),
+      });
+    }
+    sendJson(res, 402, {
+      error: `余额不足，生成 ${requestedCount} 张图需要 ${totalCost.toFixed(2)} 元，当前余额 ${(charge.balance || 0).toFixed(2)} 元`,
+      code: 'INSUFFICIENT_BALANCE',
+      balance: charge.balance,
+      cost: totalCost,
+    });
+    return;
+  }
+
   // 循环创建 N 个 task 并异步执行
   for (const { task, taskKey, messageId } of taskRecords) {
-    await setTask(redis, taskKey, task);
-    waitUntil(runTask({ redis, taskKey, task, apiKey }));
+    await setTask(redis, taskKey, { ...task, charged: COST_DRAW });
+    waitUntil(runTask({ redis, taskKey, task: { ...task, charged: COST_DRAW }, apiKey }));
     tasks.push({ messageId, taskId: task.id });
   }
 

@@ -2949,35 +2949,6 @@ select {
   border: 2px solid rgba(219, 169, 14, 0.2);
   color: #8c640a;
 }
-/* ===== 余额提醒条 ===== */
-.balance-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0;
-  gap: 10px;
-  padding: 7px 14px;
-  margin: 0;
-  background: rgba(236, 252, 255, 0.7);
-  border-bottom: 1px solid rgba(45, 160, 175, 0.18);
-  font-size: 13px;
-  color: #0f7a90;
-}
-.balance-bar-text {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.balance-bar-low {
-  background: rgba(255, 232, 222, 0.85);
-  border-bottom-color: rgba(225, 95, 60, 0.3);
-  color: #c85a26;
-}
-.balance-bar-low .balance-bar-text {
-  font-weight: 600;
-}
 /* ===== 充值弹窗 ===== */
 .recharge-dialog {
   width: 100%;
@@ -3028,6 +2999,11 @@ select {
 }
 .recharge-custom-input:focus {
   border-color: rgba(45, 160, 175, 0.7);
+}
+.recharge-code-input {
+  width: 100%;
+  margin-top: 10px;
+  letter-spacing: 2px;
 }
 .recharge-hint {
   margin: 4px 0 0;

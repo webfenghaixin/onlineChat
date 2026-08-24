@@ -90,6 +90,76 @@ export function generateSalt() {
   return crypto.randomUUID().replace(/-/g, '');
 }
 
+const PBKDF2_ITERATIONS = 100000;
+
+function bytesToHex(bytes) {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function constantTimeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const maxLen = Math.max(a.length, b.length);
+  let diff = a.length === b.length ? 0 : 1;
+  for (let i = 0; i < maxLen; i += 1) {
+    diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  }
+  return diff === 0;
+}
+
+export async function hashPasswordV2(password) {
+  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+  const salt = bytesToHex(saltBytes);
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations: PBKDF2_ITERATIONS },
+    key,
+    256,
+  );
+  return { algo: 'pbkdf2', salt, iterations: PBKDF2_ITERATIONS, hash: bytesToHex(new Uint8Array(bits)) };
+}
+
+function timingSafeEqualHex(hexA, hexB) {
+  const len = Math.min(hexA.length, hexB.length);
+  let diff = hexA.length === hexB.length ? 0 : 1;
+  for (let i = 0; i < len; i += 1) {
+    diff |= parseInt(hexA[i], 16) ^ parseInt(hexB[i], 16);
+  }
+  return diff === 0;
+}
+
+export async function verifyPassword(user, password) {
+  if (!user || typeof password !== 'string') return false;
+  if (user.passwordAlgo === 'pbkdf2') {
+    if (!user.salt || !user.passwordHash) return false;
+    const iterations = Number(user.passwordIterations) > 0 ? Number(user.passwordIterations) : PBKDF2_ITERATIONS;
+    const saltBytes = new Uint8Array((user.salt.match(/.{2}/g) || []).map((h) => parseInt(h, 16)));
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(password),
+      'PBKDF2',
+      false,
+      ['deriveBits'],
+    );
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations },
+      key,
+      256,
+    );
+    return timingSafeEqualHex(bytesToHex(new Uint8Array(bits)), String(user.passwordHash));
+  }
+  if (!user.salt || !user.passwordHash) return false;
+  const legacyHash = await hashPassword(password, user.salt);
+  return constantTimeEqual(legacyHash, user.passwordHash);
+}
+
 export function createRedis() {
   const url =
     process.env.UPSTASH_REDIS_REST_URL ||
@@ -236,6 +306,23 @@ export async function rechargeUser(redis, username, amount) {
     const user = (await getRedisJson(redis, `user:${username}`)) || {};
     const current = Number.isFinite(Number(user.balance)) ? round2(user.balance) : 0;
     const next = round2(current + add);
+    user.balance = next;
+    await setRedisJson(redis, `user:${username}`, user);
+    return { ok: true, balance: next };
+  });
+}
+
+/**
+ * 退款。预扣费后任务失败时加回金额。amount<=0 直接返回成功。
+ */
+export async function refundUser(redis, username, amount) {
+  if (!redis || !username) return { ok: false, balance: 0 };
+  const back = round2(amount);
+  if (back <= 0) return { ok: true, balance: await getUserBalance(redis, username) };
+  return withBalanceLock(redis, username, async () => {
+    const user = (await getRedisJson(redis, `user:${username}`)) || {};
+    const current = Number.isFinite(Number(user.balance)) ? round2(user.balance) : 0;
+    const next = round2(current + back);
     user.balance = next;
     await setRedisJson(redis, `user:${username}`, user);
     return { ok: true, balance: next };

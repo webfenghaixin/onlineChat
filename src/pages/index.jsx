@@ -12,7 +12,6 @@ import { useIsDesktop } from '../hooks/useResponsive.js';
 import { applyTheme, getStoredTheme } from '../lib/theme-utils.js';
 
 import AuthLoading from '../components/shared/AuthLoading';
-import '../styles/mobile.css';
 import Drawer from '../components/mobile/Drawer';
 import ChatHeader from '../components/mobile/ChatHeader';
 import MessageRow from '../components/mobile/MessageRow';
@@ -161,10 +160,10 @@ export default function IndexPage() {
   }, [chat.activeMessages, chat.visibleMessageCount]);
   const hasMoreMessages = chat.activeMessages.length > chat.visibleMessageCount;
 
-  const handleRecharge = useCallback(async (amount) => {
+  const handleRecharge = useCallback(async (amount, code) => {
     setRechargeLoading(true);
     try {
-      const r = await rechargeBalance(amount);
+      const r = await rechargeBalance(amount, code);
       setBalance(r.balance);
       setRechargeDialogOpen(false);
     } catch (error) {

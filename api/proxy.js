@@ -47,6 +47,12 @@ function isGeminiModel(model) {
   return String(model || '').toLowerCase().startsWith(GEMINI_MODEL_PREFIX);
 }
 
+const MODEL_NAME_PATTERN = /^[a-zA-Z0-9._-]{1,64}$/;
+
+function isValidModelName(model) {
+  return typeof model === 'string' && MODEL_NAME_PATTERN.test(model);
+}
+
 async function authenticateEdge(request) {
   const authHeader = request.headers.get('Authorization') || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
@@ -98,6 +104,10 @@ export default async function handler(request) {
     return jsonResponse(400, { error: `Unknown source: ${source}. Available: luxee, rightcode.` });
   }
 
+  if (requestedModel && !isValidModelName(requestedModel)) {
+    return jsonResponse(400, { error: '非法模型名' });
+  }
+
   const serverApiKey = process.env[sourceConfig.key] || '';
   const contentType = request.headers.get('content-type') || 'application/json';
 
@@ -118,6 +128,11 @@ export default async function handler(request) {
   }
   const hasGeminiPayloadShape = Array.isArray(parsedBody?.contents);
   const geminiModel = requestedModel || parsedBody?.model || GEMINI_DEFAULT_MODEL;
+
+  if (!requestedModel && parsedBody?.model && !isValidModelName(parsedBody.model)) {
+    return jsonResponse(400, { error: '非法模型名' });
+  }
+
   const useGeminiEndpoint = source === 'rightcode' && (isGeminiModel(requestedModel) || hasGeminiPayloadShape);
   const targetUrl = useGeminiEndpoint
     ? `${GEMINI_BASE_URL}/v1beta/models/${geminiModel}:streamGenerateContent?alt=sse`

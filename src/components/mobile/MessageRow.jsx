@@ -57,6 +57,8 @@ const MessageRow = memo(function MessageRow({
                   className="message-image message-image-clickable"
                   src={image.image_url.url}
                   alt="上传图片"
+                  loading="lazy"
+                  decoding="async"
                   onClick={() => setPreviewIndex(idx)}
                 />
               ))}

@@ -7,6 +7,7 @@ import { deleteRefImages } from '../lib/ref-image-store.js';
 export function useDrawSelection({
   activeDrawConversation,
   activeDrawMessages,
+  drawConversationsRef,
   updateDrawConversation,
   setDrawConversations,
   setErrorText,
@@ -22,35 +23,49 @@ export function useDrawSelection({
   const confirmDeleteDrawMessage = useCallback(() => {
     if (!deleteDrawTarget) return;
     const { conversationId, messageId } = deleteDrawTarget;
-    // 收集被删 user 消息引用的 refId，删除后联动清理本地 ref-image-store
+    // updater 是渲染期才执行，不能在里面收集 refId；改为提交删除前从当前快照同步收集
+    const snapshotConv = activeDrawConversation?.id === conversationId
+      ? activeDrawConversation
+      : drawConversationsRef.current.find((c) => c.id === conversationId);
+    const snapshotMessages = snapshotConv?.messages || [];
     const removedRefIds = [];
     const collectRefIds = (message) => {
       if (message?.role === 'user' && Array.isArray(message.referenceMeta)) {
         message.referenceMeta.forEach((meta) => {
-          if (meta?.refId) removedRefIds.push(meta.refId);
+          if (meta?.refId && !removedRefIds.includes(meta.refId)) removedRefIds.push(meta.refId);
         });
       }
     };
+    // 先按与 updater 相同的规则确定将被删除的消息并收集 refId
+    const idx = snapshotMessages.findIndex((m) => m.id === messageId);
+    if (idx >= 0) {
+      const targetMessage = snapshotMessages[idx];
+      if (targetMessage.batchId) {
+        snapshotMessages.forEach((m) => {
+          if (m.batchId === targetMessage.batchId) collectRefIds(m);
+        });
+      } else if (targetMessage.role === 'assistant' && idx > 0 && snapshotMessages[idx - 1].role === 'user') {
+        collectRefIds(snapshotMessages[idx - 1]);
+      } else if (targetMessage.role === 'user' && idx + 1 < snapshotMessages.length && snapshotMessages[idx + 1].role === 'assistant') {
+        collectRefIds(snapshotMessages[idx]);
+      } else {
+        collectRefIds(targetMessage);
+      }
+    }
     updateDrawConversation(conversationId, (conv) => {
       const msgs = conv.messages || [];
       const idx = msgs.findIndex((m) => m.id === messageId);
       if (idx < 0) return conv;
       const targetMessage = msgs[idx];
       if (targetMessage.batchId) {
-        msgs.forEach((m) => {
-          if (m.batchId === targetMessage.batchId) collectRefIds(m);
-        });
         return { ...conv, messages: msgs.filter((m) => m.batchId !== targetMessage.batchId) };
       }
       const newMessages = [...msgs];
       if (newMessages[idx].role === 'assistant' && idx > 0 && newMessages[idx - 1].role === 'user') {
-        collectRefIds(newMessages[idx - 1]);
         newMessages.splice(idx - 1, 2);
       } else if (newMessages[idx].role === 'user' && idx + 1 < newMessages.length && newMessages[idx + 1].role === 'assistant') {
-        collectRefIds(newMessages[idx]);
         newMessages.splice(idx, 2);
       } else {
-        collectRefIds(newMessages[idx]);
         newMessages.splice(idx, 1);
       }
       return { ...conv, messages: newMessages };
@@ -63,7 +78,7 @@ export function useDrawSelection({
       c.id !== conversationId || !c.messagesLoaded || (c.messages || []).length > 0
     )));
     setDeleteDrawTarget(null);
-  }, [deleteDrawTarget, updateDrawConversation, setDrawConversations]);
+  }, [deleteDrawTarget, activeDrawConversation, drawConversationsRef, updateDrawConversation, setDrawConversations]);
 
   const enterDrawSelectMode = useCallback(() => {
     setDrawSelectMode(true); setDrawSelectedMessageIds(new Set()); setErrorText('');
@@ -94,35 +109,37 @@ export function useDrawSelection({
   }, [activeDrawMessages]);
   const deleteSelectedDrawMessages = useCallback(() => {
     if (!activeDrawConversation || drawSelectedMessageIds.size === 0) return;
-    // 收集被删 user 消息引用的 refId，删除后联动清理本地 ref-image-store
+    // updater 是渲染期才执行，不能在里面收集 refId；改为提交删除前从当前快照同步收集
+    const snapshotMessages = activeDrawConversation.messages || [];
     const removedRefIds = [];
+    // 先按与 updater 相同的规则确定将被删除的消息并收集 refId
+    const removableIds = new Set(drawSelectedMessageIds);
+    snapshotMessages.forEach((message, index) => {
+      if (!drawSelectedMessageIds.has(message.id)) return;
+      if (message.batchId) {
+        snapshotMessages.forEach((batchMessage) => {
+          if (batchMessage.batchId === message.batchId) removableIds.add(batchMessage.id);
+        });
+        return;
+      }
+      if (message.role === 'user') {
+        const nextMessage = snapshotMessages[index + 1];
+        if (nextMessage?.role === 'assistant') removableIds.add(nextMessage.id);
+      }
+      if (message.role === 'assistant') {
+        const previousMessage = snapshotMessages[index - 1];
+        if (previousMessage?.role === 'user') removableIds.add(previousMessage.id);
+      }
+    });
+    snapshotMessages.forEach((m) => {
+      if (removableIds.has(m.id) && m.role === 'user' && Array.isArray(m.referenceMeta)) {
+        m.referenceMeta.forEach((meta) => {
+          if (meta?.refId && !removedRefIds.includes(meta.refId)) removedRefIds.push(meta.refId);
+        });
+      }
+    });
     updateDrawConversation(activeDrawConversation.id, (conversation) => {
-      const removableIds = new Set(drawSelectedMessageIds);
       const msgs = conversation.messages || [];
-      msgs.forEach((message, index) => {
-        if (!drawSelectedMessageIds.has(message.id)) return;
-        if (message.batchId) {
-          msgs.forEach((batchMessage) => {
-            if (batchMessage.batchId === message.batchId) removableIds.add(batchMessage.id);
-          });
-          return;
-        }
-        if (message.role === 'user') {
-          const nextMessage = msgs[index + 1];
-          if (nextMessage?.role === 'assistant') removableIds.add(nextMessage.id);
-        }
-        if (message.role === 'assistant') {
-          const previousMessage = msgs[index - 1];
-          if (previousMessage?.role === 'user') removableIds.add(previousMessage.id);
-        }
-      });
-      msgs.forEach((m) => {
-        if (removableIds.has(m.id) && m.role === 'user' && Array.isArray(m.referenceMeta)) {
-          m.referenceMeta.forEach((meta) => {
-            if (meta?.refId) removedRefIds.push(meta.refId);
-          });
-        }
-      });
       const remainingMessages = msgs.filter((m) => !removableIds.has(m.id));
       return { ...conversation, title: remainingMessages.length ? conversation.title : '新的画图', messages: remainingMessages };
     });

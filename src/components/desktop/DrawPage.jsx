@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
 import { Button, Card, Collapse, Icon, Loading, Tabs, Tooltip } from 'animal-island-ui';
 import item001 from 'animal-island-ui/items/item-001.png';
 import PortaledSelect from '../shared/PortaledSelect';
@@ -26,6 +26,29 @@ import { prepareDrawReferenceImage } from '../../lib/image-utils';
 import { saveRefImage, deleteRefImage, getRefImages } from '../../lib/ref-image-store';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import Scrollbar from '../shared/Scrollbar';
+
+// 判断 assistant 消息是否为生成中的占位任务（不依赖组件作用域，外提为纯函数）
+function isPendingDrawMessage(message) {
+  return (
+    message.role === 'assistant' &&
+    !message.imageUrl &&
+    !message.error &&
+    (message.pending || message.taskId)
+  );
+}
+
+// 加载中瓦片：currentTime 每秒变化只重渲此小组件，避免整页重渲
+const DrawLoadingTile = memo(function DrawLoadingTile({ resultMessage, currentTime, formatDuration: formatDurationFn }) {
+  const elapsedSeconds = resultMessage.createdAt
+    ? Math.max(0, Math.floor((currentTime - resultMessage.createdAt) / 1000))
+    : 0;
+  return (
+    <div className="draw-result-tile draw-result-tile-loading">
+      <img src="/logo-2.png" alt="" aria-hidden="true" />
+      <span>{formatDurationFn(elapsedSeconds)}</span>
+    </div>
+  );
+});
 
 export default function DrawPage({
   settings,
@@ -456,14 +479,26 @@ export default function DrawPage({
     return () => cancelAnimationFrame(rafId);
   }, [activeDrawMessages, isGenerating, updateScrollState]);
 
-  const isPendingDrawMessage = (message) => (
-    message.role === 'assistant' &&
-    !message.imageUrl &&
-    !message.error &&
-    (message.pending || message.taskId)
-  );
   const activePendingDrawTaskCount = activeDrawMessages.filter(isPendingDrawMessage).length;
   const hasPendingDrawTask = activePendingDrawTaskCount > 0;
+
+  // batchId -> 同组 assistant 消息列表（按 batchIndex 排序），一次遍历建 Map，消除渲染时逐条 filter+sort 的 O(n²)
+  const batchGroupsMap = useMemo(() => {
+    const map = new Map();
+    for (const message of activeDrawConversation.messages) {
+      if (message.role !== 'assistant' || !message.batchId) continue;
+      let group = map.get(message.batchId);
+      if (!group) {
+        group = [];
+        map.set(message.batchId, group);
+      }
+      group.push(message);
+    }
+    for (const group of map.values()) {
+      group.sort((a, b) => (a.batchIndex || 0) - (b.batchIndex || 0));
+    }
+    return map;
+  }, [activeDrawConversation.messages]);
 
   useEffect(() => {
     if (!hasPendingDrawTask && !isGenerating) return undefined;
@@ -527,10 +562,13 @@ export default function DrawPage({
     DRAW_MAX_BATCH_COUNT,
     Math.max(DRAW_MIN_BATCH_COUNT, Number(settings.drawImageCount) || 1),
   );
-  const drawCountOptions = Array.from({ length: DRAW_MAX_BATCH_COUNT }, (_, index) => ({
-    key: String(index + 1),
-    label: `${index + 1} 张`,
-  }));
+  const drawCountOptions = useMemo(
+    () => Array.from({ length: DRAW_MAX_BATCH_COUNT }, (_, index) => ({
+      key: String(index + 1),
+      label: `${index + 1} 张`,
+    })),
+    [],
+  );
 
   const drawHistoryPane = (
     <>
@@ -746,6 +784,8 @@ export default function DrawPage({
                                         className="draw-ref-image draw-ref-image-clickable"
                                         src={url}
                                         alt={`参考图 ${i + 1}`}
+                                        loading="lazy"
+                                        decoding="async"
                                         onClick={() => openPreview(cacheUrls, i)}
                                       />
                                     ))}
@@ -777,6 +817,8 @@ export default function DrawPage({
                                   className="draw-ref-image draw-ref-image-clickable"
                                   src={url}
                                   alt={`参考图 ${i + 1}`}
+                                  loading="lazy"
+                                  decoding="async"
                                   onClick={() => openPreview(refImgs, i)}
                                 />
                               ))}
@@ -826,9 +868,7 @@ export default function DrawPage({
 
               if (msg.role === 'assistant' && (msg.imageUrl || msg.error || isPendingDrawMessage(msg))) {
                 const resultMessages = msg.batchId
-                  ? activeDrawConversation.messages
-                    .filter((message) => message.role === 'assistant' && message.batchId === msg.batchId)
-                    .sort((a, b) => (a.batchIndex || 0) - (b.batchIndex || 0))
+                  ? (batchGroupsMap.get(msg.batchId) || [msg])
                   : [msg];
                 const isFirstBatchMessage = resultMessages[0]?.id === msg.id;
                 if (!isFirstBatchMessage) return null;
@@ -896,6 +936,8 @@ export default function DrawPage({
                                     className="draw-result-image draw-result-image-clickable"
                                     src={resultMessage.imageUrl}
                                     alt={`${resultMessage.prompt || '生成图片'} ${resultIndex + 1}`}
+                                    loading="lazy"
+                                    decoding="async"
                                     onClick={() => openGeneratedImagePreview(resultMessage.id)}
                                   />
                                   {!drawSelectMode && (
@@ -923,14 +965,13 @@ export default function DrawPage({
                               );
                             }
 
-                            const elapsedSeconds = resultMessage.createdAt
-                              ? Math.max(0, Math.floor((currentTime - resultMessage.createdAt) / 1000))
-                              : 0;
                             return (
-                              <div key={resultMessage.id} className="draw-result-tile draw-result-tile-loading">
-                                <img src="/logo-2.png" alt="" aria-hidden="true" />
-                                <span>{formatDuration(elapsedSeconds)}</span>
-                              </div>
+                              <DrawLoadingTile
+                                key={resultMessage.id}
+                                resultMessage={resultMessage}
+                                currentTime={currentTime}
+                                formatDuration={formatDuration}
+                              />
                             );
                           })}
                         </div>
@@ -1068,6 +1109,8 @@ export default function DrawPage({
                         className="pending-image-preview pending-image-clickable"
                         src={img.url}
                         alt={`参考图 ${index + 1}`}
+                        loading="lazy"
+                        decoding="async"
                         onClick={() => openPreview(drawPendingImages.map((i) => i.url), index)}
                       />
                       {img.uploadState === 'processing' && (

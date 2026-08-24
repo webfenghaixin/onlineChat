@@ -899,6 +899,7 @@
   border-radius: 50%;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.95);
+  color: var(--brand-strong);
   cursor: pointer;
   font-size: 20px;
   display: flex;

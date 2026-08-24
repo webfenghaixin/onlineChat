@@ -95,16 +95,96 @@ export function useCloudSync({
   dirtyConversationVersionsRef,
   dirtyDrawConversationVersionsRef,
 }) {
-  // 本地持久化
+  // 本地持久化状态镜像，供防抖落盘、页面隐藏、卸载时取最新快照
+  const localPersistStateRef = useRef({ settings, conversations, activeConversationId, drawConversations, activeDrawConversationId });
+  localPersistStateRef.current = { settings, conversations, activeConversationId, drawConversations, activeDrawConversationId };
+  const localPersistTimerRef = useRef(null);
+
+  // 本地持久化：500ms trailing 防抖，避免依赖高频变化时同步写 localStorage
   useEffect(() => {
-    saveState({
-      settings,
-      conversations,
-      activeConversationId,
-      drawConversations,
-      activeDrawConversationId,
-    });
+    if (localPersistTimerRef.current) window.clearTimeout(localPersistTimerRef.current);
+    localPersistTimerRef.current = window.setTimeout(() => {
+      localPersistTimerRef.current = null;
+      saveState(localPersistStateRef.current);
+    }, 500);
+    return () => {
+      // 依赖变化触发的清理只取消旧定时器（新一轮 effect 会重新调度），不落盘
+      if (localPersistTimerRef.current) {
+        window.clearTimeout(localPersistTimerRef.current);
+        localPersistTimerRef.current = null;
+      }
+    };
   }, [settings, conversations, activeConversationId, drawConversations, activeDrawConversationId]);
+
+  // 页面隐藏/组件卸载时，若本地持久化仍有 pending 定时器，立即清除并同步落盘一次
+  useEffect(() => {
+    const flushPendingLocalPersist = () => {
+      if (!localPersistTimerRef.current) return;
+      window.clearTimeout(localPersistTimerRef.current);
+      localPersistTimerRef.current = null;
+      saveState(localPersistStateRef.current);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushPendingLocalPersist();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      flushPendingLocalPersist();
+    };
+  }, []);
+
+  // 始终持有最新状态快照，供页面隐藏/退出时同步刷新
+  const flushSnapshotRef = useRef({ settings, conversations, activeConversationId, drawConversations, activeDrawConversationId });
+  flushSnapshotRef.current = { settings, conversations, activeConversationId, drawConversations, activeDrawConversationId };
+
+  // 组件卸载标记：区分"effect 将重跑（重新排定保存）"与"卸载（不会再保存）"
+  const cloudSyncUnmountedRef = useRef(false);
+  useEffect(() => () => { cloudSyncUnmountedRef.current = true; }, []);
+
+  // 构造包含所有未落库脏数据的保存 payload（页面隐藏 flush 与卸载 flush 共用）；无脏数据时返回 null
+  const buildDirtyPayload = () => {
+    if (cloudDirtyVersionRef.current <= cloudSavedVersionRef.current) return null;
+    const conversationVersions = new Map(dirtyConversationVersionsRef.current);
+    const drawConversationVersions = new Map(dirtyDrawConversationVersionsRef.current);
+    if (conversationVersions.size === 0 && drawConversationVersions.size === 0) return null;
+    const snapshot = flushSnapshotRef.current;
+    const targetVersion = cloudDirtyVersionRef.current;
+    return {
+      payload: {
+        settings: snapshot.settings,
+        conversations: buildCloudSaveConversations(snapshot.conversations, conversationVersions, targetVersion),
+        activeConversationId: snapshot.activeConversationId,
+        drawConversations: buildCloudSaveConversations(snapshot.drawConversations, drawConversationVersions, targetVersion, true),
+        activeDrawConversationId: snapshot.activeDrawConversationId,
+      },
+    };
+  };
+
+  // 页面隐藏/退出/刷新时，若仍有未同步到云端的变更，用 keepalive 请求立即上报。
+  // 避免小图片生成成功后，用户在云端防抖落库前退出，导致重新进入时图片“丢失”。
+  useEffect(() => {
+    if (authState !== 'authenticated') return undefined;
+    let lastFlushAt = 0;
+    const flushIfDirty = () => {
+      const now = Date.now();
+      if (now - lastFlushAt < 1500) return;
+      const dirtyPayload = buildDirtyPayload();
+      if (!dirtyPayload) return;
+      lastFlushAt = now;
+      saveToCloud(dirtyPayload.payload, { keepalive: true }).catch(() => {});
+    };
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flushIfDirty(); };
+    const onUnload = () => flushIfDirty();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pagehide', onUnload);
+    window.addEventListener('beforeunload', onUnload);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pagehide', onUnload);
+      window.removeEventListener('beforeunload', onUnload);
+    };
+  }, [authState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 云端自动保存
   useEffect(() => {
@@ -117,6 +197,13 @@ export function useCloudSync({
       || isBusy
       || cloudDirtyVersionRef.current <= cloudSavedVersionRef.current
     ) {
+      // 忙碌期间不丢脏数据：排 30s 兜底定时器重新触发保存尝试，
+      // 避免长流式回复期间云端保存一直被挂起
+      if (authState === 'authenticated' && isBusy && cloudDirtyVersionRef.current > cloudSavedVersionRef.current) {
+        cloudSaveTimerRef.current = window.setTimeout(() => {
+          setCloudSaveRetryTick((current) => current + 1);
+        }, 30000);
+      }
       return undefined;
     }
 
@@ -167,11 +254,19 @@ export function useCloudSync({
         });
     }, delay);
 
-    return () => clearTimeout(cloudSaveTimerRef.current);
+    return () => {
+      clearTimeout(cloudSaveTimerRef.current);
+      // 仅在组件卸载（而非 effect 因状态变化重跑）时兜底：
+      // 定时器尚未触发且仍有未落库的脏数据 → 用最新快照构造 payload，keepalive 立即上报
+      if (!cloudSyncUnmountedRef.current) return;
+      const dirtyPayload = buildDirtyPayload();
+      if (!dirtyPayload) return;
+      saveToCloud(dirtyPayload.payload, { keepalive: true }).catch(() => {});
+    };
   }, [
     authState, isSending, isGenerating, cloudDirtyVersion, cloudSaveRetryTick,
     settings, conversations, activeConversationId, drawConversations, activeDrawConversationId,
-  ]);
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 鉴权加载
   useEffect(() => {

@@ -20,7 +20,6 @@ export function useDrawExecution({
   authState,
   balance,
   markCloudDirty,
-  drawConversations,
   drawConversationsRef,
   activeDrawConversationId,
   activeDrawConversationIdRef,
@@ -47,24 +46,30 @@ export function useDrawExecution({
   const drawTaskControllersRef = useRef(new Map());
   const activeDrawTaskIdsRef = useRef(new Set());
   const resumedDrawTasksRef = useRef(new Set());
+  // 持有最新 resumePendingTasks，供 visibilitychange 处理器调用，避免闭包过期
+  const resumePendingTasksRef = useRef(null);
 
-  const _executeDraw = useCallback(async ({ prompt, referenceImages, referenceMeta, targetConvId, model, size, quality, imageCount = 1, preWarning }) => {
-    if (!prompt || drawSubmissionRef.current || authState !== 'authenticated') return;
+  const _executeDraw = useCallback(async ({ prompt, referenceImages, referenceMeta, targetConvId, model, size, quality, imageCount = 1, preWarning, submissionId }) => {
+    if (!prompt || authState !== 'authenticated') return;
+    // 兼容调用方预设的占位锁：已有锁且不是自己设置的占位 id → 视为重复提交
+    if (drawSubmissionRef.current && drawSubmissionRef.current !== submissionId) return;
     const requestedCount = Math.min(DRAW_MAX_BATCH_COUNT, Math.max(DRAW_MIN_BATCH_COUNT, Number(imageCount) || 1));
     const totalCost = Number((COST_DRAW * requestedCount).toFixed(2));
+    const finalSubmissionId = submissionId || createId();
+    const releaseSubmission = () => {
+      if (drawSubmissionRef.current !== finalSubmissionId) return;
+      drawSubmissionRef.current = null;
+      setIsDrawSubmitting(false);
+    };
     if (balance !== null && balance < totalCost - 0.0001) {
+      // 释放调用方预设的占位锁
+      releaseSubmission();
       setErrorText(`余额不足，生成 ${requestedCount} 张图需要 ${totalCost.toFixed(2)} 元，当前余额 ${balance.toFixed(2)} 元`);
       setRechargeDialogOpen(true);
       return;
     }
-    const submissionId = createId();
-    drawSubmissionRef.current = submissionId;
+    drawSubmissionRef.current = finalSubmissionId;
     setIsDrawSubmitting(true);
-    const releaseSubmission = () => {
-      if (drawSubmissionRef.current !== submissionId) return;
-      drawSubmissionRef.current = null;
-      setIsDrawSubmitting(false);
-    };
     if (drawImageCount + requestedCount > DRAW_MAX_IMAGES) setDrawLimitWarning(true);
     setErrorText('');
     // 参考图部分不可用的警告在此回填，避免被上面的清空逻辑覆盖
@@ -209,10 +214,21 @@ export function useDrawExecution({
     const prompt = (stylePrompt ? `${stylePrompt}, ` : '') + drawPrompt.trim();
     if (!prompt || drawSubmissionRef.current || drawConvLoading || !activeDrawConversation?.messagesLoaded || authState !== 'authenticated') return;
 
+    // 提交锁前置：在任何 await 之前占位，避免参考图压缩等异步窗口内二次点击导致双批次双扣费
+    const submissionId = createId();
+    drawSubmissionRef.current = submissionId;
+    setIsDrawSubmitting(true);
+    const releasePlaceholder = () => {
+      if (drawSubmissionRef.current !== submissionId) return;
+      drawSubmissionRef.current = null;
+      setIsDrawSubmitting(false);
+    };
+
     const pendingList = Array.isArray(drawPendingImages) ? drawPendingImages : [];
     // 参考图压缩为异步任务，若仍有 processing 项直接提示稍候再发送（不再 await 压缩 promise）
     const processingCount = pendingList.filter((img) => img.uploadState === 'processing').length;
     if (processingCount > 0) {
+      releasePlaceholder();
       setStatusText(`参考图处理中 ${processingCount} 张，请稍候...`);
       return;
     }
@@ -255,6 +271,7 @@ export function useDrawExecution({
     // 总量校验：data URL 的 base64 长度总和不能超过限制，避免撑爆后端 Redis 任务记录（0.75MB）
     const totalRefBytes = referenceImages.reduce((sum, url) => sum + url.length, 0);
     if (totalRefBytes > DRAW_REFERENCE_TOTAL_BYTES_LIMIT) {
+      releasePlaceholder();
       setErrorText('参考图体积过大，请减少张数或更换图片。');
       return;
     }
@@ -267,6 +284,7 @@ export function useDrawExecution({
     const totalUnusable = recompressFailedCount + droppedUnusable;
     let preWarning = '';
     if (pendingList.length > 0 && referenceImages.length === 0) {
+      releasePlaceholder();
       setErrorText('参考图全部无法使用，请重新添加参考图后再发送。');
       return;
     }
@@ -281,6 +299,7 @@ export function useDrawExecution({
     await _executeDraw({
       prompt, referenceImages,
       preWarning,
+      submissionId,
       targetConvId: activeDrawConversationId,
       model: settings.drawModel || 'gpt-image-2',
       size: settings.drawSize || '1024x1024',
@@ -293,7 +312,17 @@ export function useDrawExecution({
     const conv = drawConversationsRef.current.find((c) => c.id === activeDrawConversationId);
     if (!conv || !conv.messages) return;
     const userMsg = conv.messages.find((m) => m.id === userMessageId);
-    if (!userMsg) return;
+    if (!userMsg || drawSubmissionRef.current) return;
+
+    // 提交锁前置：在任何 await 之前占位，避免恢复参考图等异步窗口内二次点击导致双批次双扣费
+    const submissionId = createId();
+    drawSubmissionRef.current = submissionId;
+    setIsDrawSubmitting(true);
+    const releasePlaceholder = () => {
+      if (drawSubmissionRef.current !== submissionId) return;
+      drawSubmissionRef.current = null;
+      setIsDrawSubmitting(false);
+    };
 
     // 恢复参考图元数据（refId + name），供重试消息历史回显；本地无图时仍保留 meta（占位显示）
     const metaList = Array.isArray(userMsg.referenceMeta)
@@ -325,6 +354,7 @@ export function useDrawExecution({
 
     // 原消息有参考图但一张都恢复不了（本地已清理/失效）→ 阻止重试，提示走"再次生成"重新添加
     if (hadRefs && referenceImages.length === 0) {
+      releasePlaceholder();
       setErrorText('原参考图无法使用（本地已清理或已失效），请点击"再次生成"重新添加参考图后重试。');
       return;
     }
@@ -339,12 +369,14 @@ export function useDrawExecution({
         preWarning = `${failedCount} 张参考图压缩调整失败已跳过，将使用其余参考图重试。`;
       }
       if (hadRefs && referenceImages.length === 0) {
+        releasePlaceholder();
         setErrorText('参考图全部无法使用，请点击"再次生成"重新添加参考图后重试。');
         return;
       }
     }
     const totalRefBytes = referenceImages.reduce((sum, url) => sum + url.length, 0);
     if (totalRefBytes > DRAW_REFERENCE_TOTAL_BYTES_LIMIT) {
+      releasePlaceholder();
       setErrorText('参考图体积过大，请编辑消息重新添加参考图后再试。');
       return;
     }
@@ -354,6 +386,7 @@ export function useDrawExecution({
       referenceImages,
       referenceMeta: metaList.length > 0 ? metaList : null,
       preWarning,
+      submissionId,
       targetConvId: conv.id,
       model: userMsg.model || settings.drawModel || 'gpt-image-2',
       size: userMsg.size || settings.drawSize || '1024x1024',
@@ -444,22 +477,23 @@ export function useDrawExecution({
       if (document.visibilityState !== 'visible') return;
       for (const controller of drawTaskControllersRef.current.values()) controller.abort();
       drawTaskControllersRef.current.clear();
-      activeDrawTaskIdsRef.current.clear();
       resumedDrawTasksRef.current.clear();
       const activeConvId = activeDrawConversationIdRef.current;
       if (activeConvId) refreshDrawConversationMessages(activeConvId);
+      // 切回页面时主动恢复 pending 任务轮询（云端刷新是异步的，不能依赖其触发）
+      resumePendingTasksRef.current?.();
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [authState, refreshDrawConversationMessages]);
 
-  // 恢复 pending 任务
-  useEffect(() => {
-    if (authState !== 'authenticated') return undefined;
+  // 恢复 pending 任务：从最新快照扫描，防重由 resumedDrawTasksRef/activeDrawTaskIdsRef 保证，可安全重复调用
+  const resumePendingTasks = useCallback(() => {
+    if (authState !== 'authenticated') return;
     const PENDING_TIMEOUT_MS = 5 * 60 * 1000;
     const now = Date.now();
     const pendingTasks = [];
-    for (const conversation of drawConversations) {
+    for (const conversation of drawConversationsRef.current) {
       if (!conversation.messages || conversation.messages.length === 0) continue;
       for (const message of conversation.messages) {
         if (message.role === 'assistant' && message.taskId && !message.imageUrl && !message.error
@@ -483,7 +517,7 @@ export function useDrawExecution({
         }
       }
     }
-    if (!pendingTasks.length) return undefined;
+    if (!pendingTasks.length) return;
     setStatusText(`已恢复 ${pendingTasks.length} 个制图任务，正在等待生成结果...`);
     pendingTasks.forEach((task) => {
       resumedDrawTasksRef.current.add(task.taskId);
@@ -516,8 +550,15 @@ export function useDrawExecution({
         activeDrawTaskIdsRef.current.delete(task.taskId);
       });
     });
-    return undefined;
-  }, [authState, drawConversations, settings, updateDrawConversation, setStatusText]);
+  }, [authState, drawConversationsRef, settings, updateDrawConversation, setStatusText]);
+
+  resumePendingTasksRef.current = resumePendingTasks;
+
+  // 登录成功后恢复一次 pending 任务轮询（不再依赖 drawConversations 变化隐式重跑）
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    resumePendingTasks();
+  }, [authState, resumePendingTasks]);
 
   return {
     isDrawSubmitting,

@@ -53,7 +53,8 @@ function canvasToBlob(canvas, type, quality) {
  */
 async function compressImageToDataUrl(src, options, errorLabel = '图片') {
   const { maxDimension, maxBytes, minQuality } = options;
-  const originalDataUrl = typeof src === 'string' ? src : await readAsDataUrl(src);
+  // 持有原图 data URL 的大变量，drawImage 完成后置 null 以便 GC 释放
+  let originalDataUrl = typeof src === 'string' ? src : await readAsDataUrl(src);
   const image = await loadImageElement(originalDataUrl);
   const sourceWidth = image.naturalWidth || image.width;
   const sourceHeight = image.naturalHeight || image.height;
@@ -66,28 +67,37 @@ async function compressImageToDataUrl(src, options, errorLabel = '图片') {
   canvas.width = targetWidth;
   canvas.height = targetHeight;
 
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error(`${errorLabel}处理失败，请更换浏览器后重试。`);
+  try {
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error(`${errorLabel}处理失败，请更换浏览器后重试。`);
+    }
+
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, targetWidth, targetHeight);
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+    // 原图已绘制到 canvas，释放大字符串引用
+    originalDataUrl = null;
+
+    let quality = 0.86;
+    let blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+
+    while (blob.size > maxBytes && quality > minQuality) {
+      quality = Math.max(minQuality, quality - 0.08);
+      blob = await canvasToBlob(canvas, 'image/jpeg', quality);
+    }
+
+    if (blob.size > maxBytes) {
+      throw new Error(`${errorLabel}仍然过大，请先裁剪后再上传。`);
+    }
+
+    return await readAsDataUrl(blob);
+  } finally {
+    // 完成/异常路径均释放 canvas 位图内存
+    canvas.width = 0;
+    canvas.height = 0;
   }
-
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, targetWidth, targetHeight);
-  context.drawImage(image, 0, 0, targetWidth, targetHeight);
-
-  let quality = 0.86;
-  let blob = await canvasToBlob(canvas, 'image/jpeg', quality);
-
-  while (blob.size > maxBytes && quality > minQuality) {
-    quality = Math.max(minQuality, quality - 0.08);
-    blob = await canvasToBlob(canvas, 'image/jpeg', quality);
-  }
-
-  if (blob.size > maxBytes) {
-    throw new Error(`${errorLabel}仍然过大，请先裁剪后再上传。`);
-  }
-
-  return readAsDataUrl(blob);
 }
 
 /**

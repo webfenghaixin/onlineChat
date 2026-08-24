@@ -41,6 +41,24 @@ export default async function handler(request) {
       return jsonResponse(400, { error: '单次充值上限 10000 元' });
     }
 
+    const expectedCode = process.env.RECHARGE_CODE || '';
+    if (!expectedCode) {
+      return jsonResponse(503, { error: '充值通道未开启' });
+    }
+
+    const inputCode = typeof body?.code === 'string' ? body.code : '';
+    let codeMatch = false;
+    if (inputCode.length === expectedCode.length) {
+      let diff = 0;
+      for (let i = 0; i < expectedCode.length; i += 1) {
+        diff |= inputCode.charCodeAt(i) ^ expectedCode.charCodeAt(i);
+      }
+      codeMatch = diff === 0;
+    }
+    if (!codeMatch) {
+      return jsonResponse(403, { error: '充值码错误' });
+    }
+
     const result = await rechargeUser(redis, auth.username, amount);
     if (!result.ok) {
       return jsonResponse(400, { error: result.reason || '充值失败' });

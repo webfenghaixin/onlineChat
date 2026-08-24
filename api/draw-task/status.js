@@ -2,7 +2,8 @@ export const config = {
   maxDuration: 10,
 };
 
-import { createRedis, getRedisJson, setRedisJson, verifyJWT } from '../lib/auth-utils.js';
+import { createRedis, getRedisJson, setRedisJson, verifyJWT, refundUser, COST_DRAW } from '../lib/auth-utils.js';
+import { getLimiter, limitRequest } from '../lib/ratelimit.js';
 
 const TASK_TTL_SECONDS = 24 * 60 * 60;
 const TASK_RUNNING_TIMEOUT_MS = 5 * 60 * 1000;
@@ -65,6 +66,13 @@ export default async function handler(req, res) {
     return;
   }
 
+  const limiter = getLimiter('draw-status', 30, '1m');
+  const rateLimit = await limitRequest(limiter, auth.username);
+  if (!rateLimit.ok) {
+    sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
+    return;
+  }
+
   const requestUrl = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
   const taskId = requestUrl.searchParams.get('id') || '';
   if (!taskId) {
@@ -97,6 +105,16 @@ export default async function handler(req, res) {
       updatedAt: now,
     };
     await redis.set(taskKey, JSON.stringify(task), { ex: TASK_TTL_SECONDS }).catch(() => {});
+    // 任务已预扣费，判死时退款
+    const refundAmount = Number(task.charged) > 0 ? Number(task.charged) : COST_DRAW;
+    try {
+      const refund = await refundUser(redis, auth.username, refundAmount);
+      if (!refund.ok) {
+        console.error('[draw-task] refund failed', auth.username, task.id, refundAmount, refund.reason || '');
+      }
+    } catch (refundError) {
+      console.error('[draw-task] refund failed', auth.username, task.id, refundAmount, refundError instanceof Error ? refundError.message : String(refundError));
+    }
   }
 
   // This handler is deliberately read-only. Running the task from a status

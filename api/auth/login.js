@@ -3,13 +3,15 @@ export const config = { runtime: 'edge' };
 import {
   jsonResponse,
   handleOptions,
-  hashPassword,
+  hashPasswordV2,
+  verifyPassword,
   signJWT,
   createRedis,
   getRedisJson,
   setRedisJson,
   BALANCE_INITIAL,
 } from '../lib/auth-utils.js';
+import { getLimiter, limitRequest, getRequestIp } from '../lib/ratelimit.js';
 
 export default async function handler(request) {
   if (request.method === 'OPTIONS') return handleOptions();
@@ -17,6 +19,12 @@ export default async function handler(request) {
 
   const redis = createRedis();
   if (!redis) return jsonResponse(500, { error: '数据库未配置，请联系管理员' });
+
+  const limiter = getLimiter('login', 5, '1m');
+  const rateLimit = await limitRequest(limiter, getRequestIp(request));
+  if (!rateLimit.ok) {
+    return jsonResponse(429, { error: '操作过于频繁，请稍后再试' });
+  }
 
   let body;
   try {
@@ -37,9 +45,22 @@ export default async function handler(request) {
     return jsonResponse(401, { error: '用户名或密码错误' });
   }
 
-  const passwordHash = await hashPassword(password, user.salt);
-  if (passwordHash !== user.passwordHash) {
+  if (!(await verifyPassword(user, password))) {
     return jsonResponse(401, { error: '用户名或密码错误' });
+  }
+
+  // 老格式（单轮 SHA-256）验证通过后透明升级为 PBKDF2
+  if (user.passwordAlgo !== 'pbkdf2') {
+    try {
+      const v2 = await hashPasswordV2(password);
+      user.salt = v2.salt;
+      user.passwordHash = v2.hash;
+      user.passwordAlgo = v2.algo;
+      user.passwordIterations = v2.iterations;
+      await setRedisJson(redis, `user:${normalizedUsername}`, user);
+    } catch (upgradeError) {
+      console.error('[login] password rehash failed', upgradeError instanceof Error ? upgradeError.message : String(upgradeError));
+    }
   }
 
   // 老用户兜底：未设置余额字段的，按初始额度补发

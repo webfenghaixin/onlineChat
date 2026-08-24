@@ -364,7 +364,8 @@ async function readAsText(response) {
 }
 
 function parseSseChunk(buffer, onText) {
-  let workingBuffer = buffer;
+  // 归一化换行符，兼容服务端以 \r\n 分隔事件的情况
+  let workingBuffer = buffer.replace(/\r\n/g, '\n');
 
   while (workingBuffer.includes(SSE_BOUNDARY)) {
     const boundaryIndex = workingBuffer.indexOf(SSE_BOUNDARY);
@@ -394,7 +395,8 @@ function parseSseChunk(buffer, onText) {
       continue;
     }
 
-    onText(joined);
+    // 非 JSON 的 data 行视为脏数据丢弃，避免原文透传到聊天区
+    console.warn('[sse] unparseable data line', joined.slice(0, 100));
   }
 
   return workingBuffer;
@@ -419,7 +421,8 @@ function parseJsonLinesChunk(buffer, onText) {
       continue;
     }
 
-    onText(line);
+    // 非 JSON 行视为脏数据丢弃，避免原文透传到聊天区
+    console.warn('[sse] unparseable json line', line.slice(0, 100));
   }
 
   return remaining;
@@ -496,7 +499,13 @@ export async function streamChatCompletion({ settings, messages, signal, onText 
       continue;
     }
 
-    onText(buffer);
+    // 流式模式下无换行的裸 chunk 无法判定格式，丢弃避免把 JSON 碎片当正文透传；
+    // 非流式（stream === false）仍按原文兜底输出
+    if (settings.stream === false) {
+      onText(buffer);
+    } else {
+      console.warn('[sse] drop bare chunk without newline', buffer.slice(0, 100));
+    }
     buffer = '';
   }
 

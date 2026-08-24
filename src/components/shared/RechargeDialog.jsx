@@ -3,7 +3,7 @@ import { Button, Modal, Divider, Title } from 'animal-island-ui';
 import { BALANCE_RECHARGE_PRESETS } from '../../lib/constants';
 
 /**
- * 充值弹窗。展示预设金额快捷选择，调 onRecharge(amount)。
+ * 充值弹窗。展示预设金额快捷选择，需输入充值码，调 onRecharge(amount, code)。
  */
 export default function RechargeDialog({
   visible,
@@ -13,11 +13,13 @@ export default function RechargeDialog({
   onCancel,
 }) {
   const [customAmount, setCustomAmount] = useState('');
+  const [rechargeCode, setRechargeCode] = useState('');
 
   function submit(amount) {
     const num = Number(amount);
-    if (!Number.isFinite(num) || num <= 0) return;
-    onRecharge(num);
+    const code = rechargeCode.trim();
+    if (!Number.isFinite(num) || num <= 0 || !code) return;
+    onRecharge(num, code);
   }
 
   return (
@@ -73,14 +75,29 @@ export default function RechargeDialog({
           <Button
             type="primary"
             size="small"
-            disabled={loading || !customAmount || Number(customAmount) <= 0}
+            disabled={loading || !customAmount || Number(customAmount) <= 0 || !rechargeCode.trim()}
             onClick={() => submit(customAmount)}
           >
             {loading ? '处理中...' : '确认充值'}
           </Button>
         </div>
+        <input
+          type="password"
+          className="recharge-custom-input recharge-code-input"
+          placeholder="请输入充值码"
+          value={rechargeCode}
+          onChange={(e) => setRechargeCode(e.target.value)}
+          disabled={loading}
+          autoComplete="off"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              submit(customAmount);
+            }
+          }}
+        />
         <p className="recharge-hint">
-          充值后立即到账，可用于继续聊天或画图。当前为简化版充值（直接加余额），正式支付通道开通后会自动切换。
+          充值后立即到账，可用于继续聊天或画图。需要向管理员获取充值码。
         </p>
       </div>
     </Modal>

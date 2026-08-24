@@ -4,8 +4,8 @@ import {
   jsonResponse,
   handleOptions,
   authenticate,
-  hashPassword,
-  generateSalt,
+  hashPasswordV2,
+  verifyPassword,
   createRedis,
   getRedisJson,
   setRedisJson,
@@ -44,15 +44,15 @@ export default async function handler(request) {
     return jsonResponse(404, { error: '用户不存在' });
   }
 
-  const oldHash = await hashPassword(oldPassword, user.salt);
-  if (oldHash !== user.passwordHash) {
+  if (!(await verifyPassword(user, oldPassword))) {
     return jsonResponse(400, { error: '旧密码不正确' });
   }
 
-  const newSalt = generateSalt();
-  const newPasswordHash = await hashPassword(newPassword, newSalt);
-  user.salt = newSalt;
-  user.passwordHash = newPasswordHash;
+  const v2 = await hashPasswordV2(newPassword);
+  user.salt = v2.salt;
+  user.passwordHash = v2.hash;
+  user.passwordAlgo = v2.algo;
+  user.passwordIterations = v2.iterations;
   await setRedisJson(redis, userKey, user);
 
   return jsonResponse(200, { ok: true });

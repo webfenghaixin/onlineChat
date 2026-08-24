@@ -1,7 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { Loading, Tooltip } from 'animal-island-ui';
 import { classNames } from '../../lib/utils';
-import '../../styles/desktop.css';
 import ConfirmDialog from '../shared/ConfirmDialog';
 import AuthLoading from '../shared/AuthLoading';
 import ChatHeader from './ChatHeader';

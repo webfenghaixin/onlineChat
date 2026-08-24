@@ -1,3 +1,4 @@
+import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import {
   STORAGE_KEY,
@@ -18,7 +19,9 @@ export function renderMarkdown(text) {
   if (!text) return '';
   const cached = markdownCache.get(text);
   if (cached !== undefined) return cached;
-  const html = marked.parse(text);
+  const html = DOMPurify.sanitize(marked.parse(text), {
+    ALLOWED_URI_REGEXP: /^(?:https?:|blob:|data:image\/)/i,
+  });
   if (markdownCache.size >= MARKDOWN_CACHE_MAX) {
     const firstKey = markdownCache.keys().next().value;
     markdownCache.delete(firstKey);

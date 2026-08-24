@@ -92,9 +92,10 @@ export async function changePassword(oldPassword, newPassword) {
   return true;
 }
 
-export async function saveToCloud(state) {
+export async function saveToCloud(state, options = {}) {
   await apiRequest(resolveApiUrl('/api/data/save'), {
     method: 'POST',
+    keepalive: options.keepalive,
     body: JSON.stringify({
       conversations: state.conversations,
       settings: state.settings,
@@ -125,10 +126,10 @@ export async function fetchBalance() {
   return data;
 }
 
-export async function rechargeBalance(amount) {
+export async function rechargeBalance(amount, code) {
   const data = await apiRequest(resolveApiUrl('/api/balance'), {
     method: 'POST',
-    body: JSON.stringify({ amount }),
+    body: JSON.stringify({ amount, code }),
   });
   return data;
 }

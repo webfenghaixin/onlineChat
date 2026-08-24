@@ -131,3 +131,53 @@
     border-radius: 0;
     box-shadow: none;
   } }
+
+/* ===== 加载更早消息（移动端宿主 index.jsx 专用） ===== */
+.load-more-bar {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.load-more-button {
+  padding: 8px 18px;
+  border-radius: 14px;
+  background: rgba(17, 97, 92, 0.05);
+  color: var(--brand-strong);
+  border: 1px solid rgba(17, 97, 92, 0.1);
+  font-size: 13px;
+  font-weight: 800;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.load-more-button:hover {
+  background: rgba(17, 97, 92, 0.1);
+}
+
+/* ===== 余额提醒条（mobile/BalanceBar 专用） ===== */
+.balance-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: 10px;
+  padding: 7px 14px;
+  margin: 0;
+  background: rgba(236, 252, 255, 0.7);
+  border-bottom: 1px solid rgba(45, 160, 175, 0.18);
+  font-size: 13px;
+  color: #0f7a90;
+}
+.balance-bar-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.balance-bar-low {
+  background: rgba(255, 232, 222, 0.85);
+  border-bottom-color: rgba(225, 95, 60, 0.3);
+  color: #c85a26;
+}
+.balance-bar-low .balance-bar-text {
+  font-weight: 600;
+}

@@ -153,12 +153,40 @@ export function useChatActions({
     setStatusText('已停止生成');
   }, [setStatusText]);
 
+  // 流式文本缓冲：onText 只追加 delta 到缓冲 ref，由 ~100ms 定时器批量刷入，减少高频 setState
+  const pendingTextRef = useRef('');
+  const flushTimerRef = useRef(null);
+
+  // 把缓冲中的剩余文本一次性追加到指定 assistant 消息（防止丢字）
+  const flushPendingText = useCallback((conversationId, messageId) => {
+    if (flushTimerRef.current) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    const buffered = pendingTextRef.current;
+    if (!buffered) return;
+    pendingTextRef.current = '';
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map((message) =>
+        message.id === messageId
+          ? { ...message, content: createTextContent(`${getTextParts(message.content)}${buffered}`) }
+          : message,
+      ),
+    }));
+  }, [updateConversation]);
+
   const openDrawer = useCallback((tab) => {
     setDrawerTab(tab);
     setDrawerOpen(true);
   }, []);
 
   const sendMessage = useCallback(async (customContent) => {
+    // 图片仍在压缩处理中时禁止发送，避免发出不完整/缺图的请求
+    if (imageProcessing) {
+      setStatusText('图片处理中，请稍候...');
+      return;
+    }
     // 多图发送前按最终图片数量重新压缩（单图/无图时跳过：选图阶段已按 1 张档位最高质量压缩）
     let usableImageItems = pendingImages;
     if (!customContent && pendingImages.length > 1) {
@@ -221,22 +249,32 @@ export function useChatActions({
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
+    // 每轮流式开始前清空上一轮残留缓冲
+    pendingTextRef.current = '';
+    if (flushTimerRef.current) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+
     try {
       await streamChatCompletion({
         settings,
         messages: nextMessages.filter((m) => m.role !== 'assistant' || m.id !== assistantMessage.id),
         signal: controller.signal,
         onText: (text) => {
-          updateConversation(activeConversation.id, (conversation) => ({
-            ...conversation,
-            messages: conversation.messages.map((message) =>
-              message.id === assistantMessage.id
-                ? { ...message, content: createTextContent(`${getTextParts(message.content)}${text}`) }
-                : message,
-            ),
-          }));
+          // 只缓冲 delta，无活动定时器时设一个 ~100ms 的批量刷入定时器
+          pendingTextRef.current += text;
+          if (!flushTimerRef.current) {
+            flushTimerRef.current = window.setTimeout(() => {
+              flushTimerRef.current = null;
+              flushPendingText(activeConversation.id, assistantMessage.id);
+            }, 100);
+          }
         },
       });
+
+      // 流正常结束：先刷入剩余缓冲再走原逻辑
+      flushPendingText(activeConversation.id, assistantMessage.id);
 
       updateConversation(activeConversation.id, (conversation) => ({
         ...conversation,
@@ -248,6 +286,8 @@ export function useChatActions({
       }));
       setStatusText('回答完成');
     } catch (error) {
+      // abort/错误路径：先刷入剩余缓冲再走原逻辑（防止丢字）
+      flushPendingText(activeConversation.id, assistantMessage.id);
       if (error.name === 'AbortError') {
         updateConversation(activeConversation.id, (conversation) => ({
           ...conversation,
@@ -275,13 +315,19 @@ export function useChatActions({
         }));
       }
     } finally {
+      // 兜底：刷入全部剩余缓冲并清理定时器
+      flushPendingText(activeConversation.id, assistantMessage.id);
+      if (flushTimerRef.current) {
+        window.clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
       abortControllerRef.current = null;
       setIsSending(false);
       try { const r = await import('../lib/auth.js').then(m => m.fetchBalance()); setBalance(r.balance); } catch {}
       setShowCompleteHint(true);
       setTimeout(() => setShowCompleteHint(false), 3000);
     }
-  }, [draft, pendingImages, isSending, convLoading, activeConversation, authState, balance, settings, updateConversation, setErrorText, setStatusText, setRechargeDialogOpen, setBalance]);
+  }, [draft, pendingImages, isSending, convLoading, activeConversation, authState, balance, settings, imageProcessing, updateConversation, setErrorText, setStatusText, setRechargeDialogOpen, setBalance]);
 
   const handleComposerKeyDown = useCallback((event) => {
     if (event.key === 'Enter' && !event.shiftKey) {

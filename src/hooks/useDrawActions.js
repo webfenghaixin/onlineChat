@@ -137,6 +137,7 @@ export function useDrawActions({
   const selection = useDrawSelection({
     activeDrawConversation,
     activeDrawMessages,
+    drawConversationsRef,
     updateDrawConversation,
     setDrawConversations,
     setErrorText,

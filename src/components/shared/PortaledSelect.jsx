@@ -25,6 +25,7 @@ export default function PortaledSelect({
   const wrapperRef = useRef(null);
   const dropdownRef = useRef(null);
   const triggerRef = useRef(null);
+  const rafRef = useRef(0);
   const uid = useId();
   const listboxId = `portaled-select-${uid.replace(/:/g, '')}-listbox`;
 
@@ -35,41 +36,76 @@ export default function PortaledSelect({
     setMeasured(false);
   }, []);
 
-  // 打开时先定位，Portal 挂载后测出真实宽高，再按视口钳制坐标
-  useLayoutEffect(() => {
-    if (!open) return;
+  // 按触发器 rect 与下拉真实宽高计算视口内钳制后的坐标
+  const clampToViewport = (rect, w, h) => {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    // 横向：左对齐触发器，视口内钳制
+    let left = rect.left;
+    if (left < 8) left = 8;
+    if (left + w > vw - 8) left = vw - w - 8;
+    // 纵向：优先向下贴住触发器；下方放不下且上方更宽裕时向上
+    const spaceBelow = vh - rect.bottom;
+    const spaceAbove = rect.top;
+    let top = rect.bottom + GAP;
+    if (spaceBelow < h && spaceAbove > spaceBelow) {
+      top = rect.top - h - GAP;
+    }
+    if (top < 8) top = 8;
+    if (top + h > vh - 8) top = vh - h - 8;
+    return { left, top };
+  };
+
+  // 计算下拉在视口中的固定定位。
+  // 触发器已不在文档中（rect 宽高为 0，如被隐藏/卸载）时直接关闭下拉。
+  const updatePosition = useCallback(() => {
     const rect = wrapperRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    setPos({
-      anchorLeft: rect.left,
-      anchorTop: rect.top,
-    });
-    let raf;
-    raf = requestAnimationFrame(() => {
-      const node = dropdownRef.current;
-      if (!node) return;
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const w = node.offsetWidth || HOVER_GUESS_WIDTH;
-      const h = node.offsetHeight || Math.min(options.length * OPTION_HEIGHT + DROPDOWN_PAD, 320);
-      // 横向：左对齐触发器，视口内钳制
-      let left = rect.left;
-      if (left < 8) left = 8;
-      if (left + w > vw - 8) left = vw - w - 8;
-      // 纵向：优先向下贴住触发器；下方放不下且上方更宽裕时向上
-      const spaceBelow = vh - rect.bottom;
-      const spaceAbove = rect.top;
-      let top = rect.bottom + GAP;
-      if (spaceBelow < h && spaceAbove > spaceBelow) {
-        top = rect.top - h - GAP;
-      }
-      if (top < 8) top = 8;
-      if (top + h > vh - 8) top = vh - h - 8;
-      setPos((current) => (current ? { ...current, left, top, w, h } : current));
-      setMeasured(true);
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [open]);
+    if (!rect || (rect.width === 0 && rect.height === 0)) {
+      close();
+      return;
+    }
+    const node = dropdownRef.current;
+    if (!node) {
+      // 首次打开 Portal 尚未完成挂载，先按触发器锚定，挂载后由 rAF 测量精调
+      setPos({
+        anchorLeft: rect.left,
+        anchorTop: rect.top,
+      });
+      rafRef.current = requestAnimationFrame(() => {
+        const mounted = dropdownRef.current;
+        if (!mounted) return;
+        const w = mounted.offsetWidth || HOVER_GUESS_WIDTH;
+        const h = mounted.offsetHeight || Math.min(options.length * OPTION_HEIGHT + DROPDOWN_PAD, 320);
+        setPos((current) => ({ ...current, ...clampToViewport(rect, w, h), w, h }));
+        setMeasured(true);
+      });
+      return;
+    }
+    // 已挂载（如滚动/缩放重定位）：同步计算，避免闪回锚点位置
+    const w = node.offsetWidth || HOVER_GUESS_WIDTH;
+    const h = node.offsetHeight || Math.min(options.length * OPTION_HEIGHT + DROPDOWN_PAD, 320);
+    setPos((current) => ({ ...(current || { anchorLeft: rect.left, anchorTop: rect.top }), ...clampToViewport(rect, w, h), w, h }));
+    setMeasured(true);
+  }, [close, options.length]);
+
+  // 打开时先定位一次
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    updatePosition();
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [open, updatePosition]);
+
+  // 下拉打开期间跟随滚动/窗口缩放重新定位（capture 捕获任意祖先容器的滚动）
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleReposition = () => updatePosition();
+    document.addEventListener('scroll', handleReposition, { capture: true, passive: true });
+    window.addEventListener('resize', handleReposition);
+    return () => {
+      document.removeEventListener('scroll', handleReposition, { capture: true });
+      window.removeEventListener('resize', handleReposition);
+    };
+  }, [open, updatePosition]);
 
   // 点击外部关闭（含 Portal 内的下拉）
   useEffect(() => {
@@ -79,8 +115,8 @@ export default function PortaledSelect({
       const inDropdown = dropdownRef.current?.contains(event.target);
       if (!inWrapper && !inDropdown) close();
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
   }, [open, close]);
 
   useEffect(() => {

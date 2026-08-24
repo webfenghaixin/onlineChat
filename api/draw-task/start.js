@@ -2,7 +2,8 @@ export const config = {
   maxDuration: 300,
 };
 
-import { createRedis, getRedisJson, setRedisJson, verifyJWT, chargeUser, COST_DRAW, getUserBalance } from '../lib/auth-utils.js';
+import { createRedis, getRedisJson, setRedisJson, verifyJWT, chargeUser, refundUser, COST_DRAW, getUserBalance } from '../lib/auth-utils.js';
+import { getLimiter, limitRequest } from '../lib/ratelimit.js';
 import { cleanDrawOptions, runDrawRequest } from '../lib/draw-utils.js';
 import { waitUntil } from '@vercel/functions';
 
@@ -410,12 +411,6 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
     } catch (recordError) {
       console.error('upsertDrawTaskRecord failed after task succeeded:', recordError);
     }
-    // 图片成功后扣费 0.3 元；扣费失败不阻塞成功状态
-    if (persistentImageUrl) {
-      try {
-        await chargeUser(redis, task.owner, COST_DRAW);
-      } catch {}
-    }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     try {
@@ -434,6 +429,15 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
       });
     } catch (recordError) {
       console.error('upsertDrawTaskRecord failed after task failed:', recordError);
+    }
+    const refundAmount = Number(task.charged) > 0 ? Number(task.charged) : COST_DRAW;
+    try {
+      const refund = await refundUser(redis, task.owner, refundAmount);
+      if (!refund.ok) {
+        console.error('[draw-task] refund failed', task.owner, task.id, refundAmount, refund.reason || '');
+      }
+    } catch (refundError) {
+      console.error('[draw-task] refund failed', task.owner, task.id, refundAmount, refundError instanceof Error ? refundError.message : String(refundError));
     }
   } finally {
     if (lockKey && lockAcquired) {
@@ -464,6 +468,13 @@ export default async function handler(req, res) {
   const auth = await authenticateNodeRequest(req);
   if (auth.error) {
     sendJson(res, auth.error.status, { error: auth.error.message });
+    return;
+  }
+
+  const limiter = getLimiter('draw-start', 10, '1m');
+  const rateLimit = await limitRequest(limiter, auth.username);
+  if (!rateLimit.ok) {
+    sendJson(res, 429, { error: '操作过于频繁，请稍后再试' });
     return;
   }
 
@@ -512,7 +523,31 @@ export default async function handler(req, res) {
 
   await setTask(redis, taskKey, task);
   await upsertDrawTaskRecord(redis, auth.username, metadata);
-  waitUntil(runTask({ redis, taskKey, task, apiKey }));
+
+  // 预扣费：任务已入队，扣费失败则标记 failed，不启动后台任务
+  const charge = await chargeUser(redis, auth.username, COST_DRAW);
+  if (!charge.ok) {
+    await setTask(redis, taskKey, {
+      ...task,
+      status: 'failed',
+      error: '余额不足，任务未执行',
+      updatedAt: Date.now(),
+      completedAt: Date.now(),
+    });
+    await upsertDrawTaskRecord(redis, auth.username, metadata, {
+      error: '余额不足，任务未执行',
+      pending: false,
+    });
+    sendJson(res, 402, {
+      error: '余额不足，请充值后再画图',
+      code: 'INSUFFICIENT_BALANCE',
+      balance: charge.balance,
+      cost: COST_DRAW,
+    });
+    return;
+  }
+
+  waitUntil(runTask({ redis, taskKey, task: { ...task, charged: COST_DRAW }, apiKey }));
 
   sendJson(res, 202, {
     taskId,

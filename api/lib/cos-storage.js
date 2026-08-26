@@ -36,6 +36,9 @@ function resolveCosPublicUrl(key) {
   return `https://${COS_BUCKET}.cos.${COS_REGION}.myqcloud.com/${key.replace(/^\/+/, '')}`;
 }
 
+// 图片为不可变资源（每次生成/上传都是新 key），可永久缓存，避免用户重复查看时反复下载流量
+const IMAGE_CACHE_MAX_AGE_SECONDS = 31536000; // 1 年
+
 function cosPutObject(key, buffer, contentType) {
   return new Promise((resolve, reject) => {
     getCosClient().putObject(
@@ -45,6 +48,7 @@ function cosPutObject(key, buffer, contentType) {
         Key: key,
         Body: buffer,
         ContentType: contentType || 'application/octet-stream',
+        CacheControl: `public, max-age=${IMAGE_CACHE_MAX_AGE_SECONDS}, immutable`,
       },
       (err) => {
         if (err) return reject(err);
@@ -63,6 +67,7 @@ async function vercelBlobPut(key, buffer, contentType) {
     contentType,
     token,
     addRandomSuffix: false,
+    cacheControlMaxAge: IMAGE_CACHE_MAX_AGE_SECONDS,
   });
   return blob.url;
 }

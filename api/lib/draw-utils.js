@@ -1,19 +1,11 @@
-const DRAW_BASE = 'https://www.rightapi.ai/draw';
-const RIGHTAPI_BASE = 'https://www.rightapi.ai';
-export const ALLOWED_DRAW_PATHS = ['/v1/images/generations', '/v1/chat/completions'];
+const RIGHTAPI_BASE = 'https://rightapi.ai';
+const DRAW_GENERATIONS_ENDPOINT = `${RIGHTAPI_BASE}/v1/images/generations`;
+const DRAW_EDITS_ENDPOINT = `${RIGHTAPI_BASE}/v1/images/edits`;
 
 // rightapi.ai 异步任务轮询参数
 const RIGHTAPI_TASK_POLL_INTERVAL_MS = 3000;
 // 留 20 秒缓冲给 Vercel maxDuration=300s，避免函数被强制终止
 const RIGHTAPI_TASK_MAX_WAIT_MS = 280000;
-
-export function resolveDrawPath(apiMode) {
-  return apiMode === 'chat' ? '/v1/chat/completions' : '/v1/images/generations';
-}
-
-export function resolveDrawEndpoint(apiMode) {
-  return `${DRAW_BASE}${resolveDrawPath(apiMode)}`;
-}
 
 export function cleanDrawOptions(options = {}) {
   const rawRefImages = Array.isArray(options.referenceImages)
@@ -26,8 +18,6 @@ export function cleanDrawOptions(options = {}) {
     .slice(0, 7);
 
   return {
-    apiMode: options.apiMode === 'chat' ? 'chat' : 'images',
-    source: options.source === 'luxee' ? 'luxee' : 'rightcode',
     prompt: String(options.prompt || '').trim(),
     referenceImages,
     size: options.size || '1024x1024',
@@ -52,47 +42,6 @@ export function extractImageUrlFromContent(content) {
   if (dataMatch) return dataMatch[1];
 
   return null;
-}
-
-export function extractTextFromPayload(payload) {
-  if (!payload || typeof payload !== 'object') return '';
-
-  if (typeof payload.delta === 'string') return payload.delta;
-
-  if (Array.isArray(payload.choices)) {
-    return payload.choices
-      .map((choice) => {
-        const delta = choice?.delta;
-        const message = choice?.message;
-        return (
-          collectText(delta?.content) ||
-          collectText(delta?.text) ||
-          collectText(message?.content) ||
-          ''
-        );
-      })
-      .join('');
-  }
-
-  return collectText(payload.message?.content) || collectText(payload.content) || '';
-}
-
-function collectText(value) {
-  if (!value) return '';
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        if (typeof item === 'string') return item;
-        if (item?.type === 'text' && typeof item.text === 'string') return item.text;
-        if (typeof item?.content === 'string') return item.content;
-        return '';
-      })
-      .join('');
-  }
-  if (typeof value?.text === 'string') return value.text;
-  if (typeof value?.content === 'string') return value.content;
-  return '';
 }
 
 export function extractImageUrlFromPayload(payload) {
@@ -197,17 +146,17 @@ async function pollRightApiTask({ apiKey, taskId, signal }) {
 
     const data = await response.json();
 
-    // 完成状态：直接取图片 URL（兼容 Images 和 Gemini 两种响应格式）
-    const imageUrl = extractImageUrlFromPayload(data);
-    if (imageUrl) {
-      return { imageUrl };
-    }
-
     // 失败状态
-    if (data.status === 'failed') {
+    if (['failed', 'expired', 'canceled'].includes(data.status)) {
       const rawError = (data.error && (data.error.message || data.error)) || '图片生成失败';
       const errorMsg = typeof rawError === 'string' ? rawError : '图片生成失败';
       throw new Error(normalizeDrawErrorMessage(errorMsg, 200));
+    }
+
+    // 完成状态：OpenAI 生成返回 data[].url，Gemini 生成返回 candidates[].content.parts[].text
+    const imageUrl = extractImageUrlFromPayload(data);
+    if (imageUrl) {
+      return { imageUrl };
     }
 
     // queued / in_progress / processing：继续轮询
@@ -240,18 +189,18 @@ async function resolveReferenceImagesToDataUrls(referenceImages) {
 
 export async function runDrawRequest({ apiKey, options, signal }) {
   const cleaned = cleanDrawOptions(options);
-  const endpoint = resolveDrawEndpoint(cleaned.apiMode);
   const headers = {
     'Content-Type': 'application/json',
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  // 参考图持久化在 Vercel Blob（http URL），rightapi.ai 需要 data URL，这里转换
+  // 参考图持久化在对象存储（http URL），图片编辑接口需要 data URL，这里转换
   cleaned.referenceImages = await resolveReferenceImagesToDataUrls(cleaned.referenceImages);
 
-  const body = cleaned.apiMode === 'chat'
-    ? buildChatBody(cleaned)
-    : buildImagesBody(cleaned);
+  // 有参考图走图片编辑接口，无参考图走文生图接口
+  const hasReferenceImages = cleaned.referenceImages.length > 0;
+  const endpoint = hasReferenceImages ? DRAW_EDITS_ENDPOINT : DRAW_GENERATIONS_ENDPOINT;
+  const body = hasReferenceImages ? buildEditsBody(cleaned) : buildGenerationBody(cleaned);
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -265,131 +214,50 @@ export async function runDrawRequest({ apiKey, options, signal }) {
     throw new Error(normalizeDrawErrorMessage(errorText, response.status));
   }
 
-  if (cleaned.apiMode === 'images') {
-    const data = await response.json();
+  const data = await response.json();
 
-    // 同步模式：响应直接包含图片 URL（向后兼容）
-    const imageUrl = extractImageUrlFromPayload(data);
-    if (imageUrl) {
-      return { imageUrl };
-    }
-
-    // 异步模式：响应包含 task_id，需轮询 /v1/tasks/{task_id} 获取结果
-    if (data.task_id) {
-      return pollRightApiTask({ apiKey, taskId: data.task_id, signal });
-    }
-
-    // 既没有图片 URL 也没有 task_id，检查是否失败
-    if (data.status === 'failed') {
-      const rawError = (data.error && (data.error.message || data.error)) || '图片生成失败';
-      const errorMsg = typeof rawError === 'string' ? rawError : '图片生成失败';
-      throw new Error(normalizeDrawErrorMessage(errorMsg, 200));
-    }
-
-    throw new Error(createNoImageMessage(JSON.stringify(data).slice(0, 500), 'Images API'));
+  // 提交阶段失败
+  if (['failed', 'expired', 'canceled'].includes(data.status)) {
+    const rawError = (data.error && (data.error.message || data.error)) || '图片生成失败';
+    const errorMsg = typeof rawError === 'string' ? rawError : '图片生成失败';
+    throw new Error(normalizeDrawErrorMessage(errorMsg, 200));
   }
 
-  const fullText = await readChatResponseText(response);
-  const imageUrl = extractImageUrlFromContent(fullText);
+  // 同步模式：响应直接包含图片 URL（向后兼容）
+  const imageUrl = extractImageUrlFromPayload(data);
   if (imageUrl) {
     return { imageUrl };
   }
-  throw new Error(createNoImageMessage(fullText, 'Chat API'));
+
+  // 异步模式：响应包含 task_id，需轮询 /v1/tasks/{task_id} 获取结果
+  if (data.task_id) {
+    return pollRightApiTask({ apiKey, taskId: data.task_id, signal });
+  }
+
+  throw new Error(createNoImageMessage(JSON.stringify(data).slice(0, 500), 'Images API'));
 }
 
-function buildImagesBody(options) {
-  const images = Array.isArray(options.referenceImages) ? options.referenceImages.filter(Boolean) : [];
+function buildGenerationBody(options) {
   return {
     model: options.model,
     prompt: options.prompt,
-    image: images.length > 0 ? images : undefined,
+    n: 1,
     size: options.size,
     quality: options.quality,
     async: true,
-    response_format: 'url',
   };
 }
 
-function buildChatBody(options) {
-  const images = Array.isArray(options.referenceImages) ? options.referenceImages.filter(Boolean) : [];
-  const sizeHint = options.size ? `，图片尺寸${options.size}` : '';
-  const qualityHint = options.quality ? `，画质${options.quality}` : '';
-  const refHint = images.length > 0 ? `请参考这${images.length}张图片，` : '请根据以下描述生成图片：';
-  const textPart = `${refHint}${options.prompt}${sizeHint}${qualityHint}`;
-
-  let userContent;
-  if (images.length > 0) {
-    userContent = [
-      { type: 'text', text: textPart },
-      ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
-    ];
-  } else {
-    userContent = textPart;
-  }
-
+function buildEditsBody(options) {
   return {
     model: options.model,
-    messages: [
-      {
-        role: 'user',
-        content: userContent,
-      },
-    ],
-    stream: true,
+    prompt: options.prompt,
+    images: options.referenceImages,
+    n: 1,
     size: options.size,
     quality: options.quality,
+    async: true,
   };
 }
 
-async function readChatResponseText(response) {
-  const contentType = response.headers.get('content-type') || '';
 
-  if (!response.body || (!contentType.includes('text/event-stream') && !contentType.includes('text/plain'))) {
-    const plainText = await response.text();
-    try {
-      const parsed = JSON.parse(plainText);
-      const imageUrl = extractImageUrlFromPayload(parsed);
-      if (imageUrl) return imageUrl;
-      return extractTextFromPayload(parsed) || plainText;
-    } catch {
-      return plainText;
-    }
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8');
-  let buffer = '';
-  let fullText = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    while (buffer.includes('\n\n')) {
-      const boundaryIndex = buffer.indexOf('\n\n');
-      const rawEvent = buffer.slice(0, boundaryIndex);
-      buffer = buffer.slice(boundaryIndex + 2);
-
-      const dataLines = rawEvent
-        .split('\n')
-        .filter((line) => line.startsWith('data:'))
-        .map((line) => line.slice(5).trim());
-
-      const joined = dataLines.join('\n');
-      if (!joined || joined === '[DONE]') continue;
-
-      try {
-        const parsed = JSON.parse(joined);
-        const imageUrl = extractImageUrlFromPayload(parsed);
-        if (imageUrl) return imageUrl;
-        fullText += extractTextFromPayload(parsed);
-      } catch {
-        fullText += joined;
-      }
-    }
-  }
-
-  return fullText || buffer;
-}

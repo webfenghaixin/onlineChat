@@ -495,8 +495,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const envKey = options.source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
-  const apiKey = process.env[envKey] || '';
+  const apiKey = process.env.API_KEY_DRAW || '';
   const taskId = crypto.randomUUID();
   const metadata = normalizeTaskMetadata(body.taskMetadata, taskId);
   const taskKey = `drawTask:${auth.username}:${taskId}`;

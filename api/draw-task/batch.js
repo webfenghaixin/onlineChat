@@ -83,8 +83,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const envKey = options.source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
-  const apiKey = process.env[envKey] || '';
+  const apiKey = process.env.API_KEY_DRAW || '';
 
   // 前端预生成 N 个 assistantMessage，后端为每个生成独立 taskId
   const rawMetadata = body.taskMetadata || {};

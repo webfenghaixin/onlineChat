@@ -5,7 +5,6 @@ const SSE_BOUNDARY = '\n\n';
 const DRAW_TASK_FIRST_POLL_DELAY_MS = 30000;
 const DRAW_TASK_POLL_INTERVAL_MS = 5000;
 const DRAW_TASK_MAX_DURATION_MS = 5 * 60 * 1000;
-const GEMINI_MODEL_PREFIX = 'gemini-';
 
 function normalizeDrawErrorMessage(rawText, status, apiModeLabel = '当前模式') {
   const text = String(rawText || '').trim();
@@ -84,10 +83,6 @@ function collectTextFromValue(value) {
   }
 
   return '';
-}
-
-function isGeminiModel(model) {
-  return String(model || '').toLowerCase().startsWith(GEMINI_MODEL_PREFIX);
 }
 
 function normalizeMessageContent(content) {
@@ -232,69 +227,8 @@ function buildMessagesPayload(messages, systemPrompt) {
   ];
 }
 
-function dataUrlToInlineData(url) {
-  if (typeof url !== 'string') {
-    return null;
-  }
-
-  const match = url.match(/^data:(.+?);base64,(.+)$/);
-  if (!match) {
-    return null;
-  }
-
-  return {
-    mime_type: match[1],
-    data: match[2],
-  };
-}
-
-function buildGeminiRequestBody(settings, messages) {
-  const normalizedMessages = buildMessagesPayload(messages, settings.systemPrompt);
-  const systemMessage = normalizedMessages.find((message) => message.role === 'system');
-  const conversationMessages = normalizedMessages.filter((message) => message.role !== 'system');
-
-  const contents = conversationMessages.map((message) => ({
-    role: message.role === 'assistant' ? 'model' : 'user',
-    parts: message.content
-      .map((item) => {
-        if (item?.type === 'text' && typeof item.text === 'string' && item.text) {
-          return { text: item.text };
-        }
-
-        if (item?.type === 'image_url') {
-          const inlineData = dataUrlToInlineData(item.image_url?.url);
-          if (inlineData) {
-            return { inline_data: inlineData };
-          }
-        }
-
-        return null;
-      })
-      .filter(Boolean),
-  }));
-
-  return {
-    contents,
-    systemInstruction: systemMessage
-      ? {
-          parts: systemMessage.content
-            .filter((item) => item?.type === 'text' && item.text)
-            .map((item) => ({ text: item.text })),
-        }
-      : undefined,
-    generationConfig: {
-      temperature: settings.temperature,
-      maxOutputTokens: Number(settings.maxOutputTokens) || undefined,
-    },
-  };
-}
-
 function buildRequestBody(settings, messages) {
   const { model, temperature, maxOutputTokens, stream, systemPrompt } = settings;
-  if (isGeminiModel(model)) {
-    return buildGeminiRequestBody(settings, messages);
-  }
-
   const normalizedMessages = buildMessagesPayload(messages, systemPrompt);
 
   return {
@@ -340,7 +274,6 @@ function buildRequestHeaders(settings) {
   };
 
   if (settings.useProxy !== false) {
-    headers['X-Source'] = settings.source || 'luxee';
     headers['X-Model'] = settings.model || '';
     const token = getToken();
     if (token) {
@@ -526,7 +459,7 @@ export async function streamChatCompletion({ settings, messages, signal, onText 
   onText(tail);
 }
 
-function resolveDrawProxyUrl(settings, apiMode) {
+function resolveDrawProxyUrl(settings, hasReferenceImages) {
   if (settings.useProxy) {
     const proxyPath = settings.proxyPath?.trim() || DEFAULT_PROXY_PATH;
     const drawPath = proxyPath.replace(/\/proxy\/?$/, '/draw').replace(/\/proxy$/, '/draw');
@@ -535,21 +468,18 @@ function resolveDrawProxyUrl(settings, apiMode) {
     }
     return drawPath.startsWith('/') ? drawPath : `/${drawPath}`;
   }
-  const basePath = 'https://www.rightapi.ai/draw';
-  return apiMode === 'chat'
-    ? `${basePath}/v1/chat/completions`
-    : `${basePath}/v1/images/generations`;
+  const basePath = 'https://rightapi.ai';
+  return `${basePath}${hasReferenceImages ? '/v1/images/edits' : '/v1/images/generations'}`;
 }
 
-function buildDrawHeaders(settings, apiMode) {
+function buildDrawHeaders(settings, hasReferenceImages) {
   const headers = {
     'Content-Type': 'application/json',
   };
 
   if (settings.useProxy) {
-    headers['X-Source'] = settings.source || 'rightcode';
-    headers['X-Draw-Path'] = apiMode === 'chat'
-      ? '/v1/chat/completions'
+    headers['X-Draw-Path'] = hasReferenceImages
+      ? '/v1/images/edits'
       : '/v1/images/generations';
   } else if (settings.apiKey.trim()) {
     headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
@@ -696,14 +626,11 @@ async function generateImageViaTaskApi({
   onTaskStart,
   taskMetadata,
 }) {
-  const apiMode = 'images'; // 写死 Images API
   const startedAt = Date.now();
   const startResponse = await fetch(resolveDrawTaskUrl(settings, 'start'), {
     method: 'POST',
     headers: getAuthorizedHeaders(),
     body: JSON.stringify({
-      apiMode,
-      source: settings.source || 'rightcode',
       prompt,
       referenceImages: Array.isArray(referenceImages) ? referenceImages : [],
       size: size || '1024x1024',
@@ -814,10 +741,10 @@ async function generateImageViaImagesApi({ url, headers, model, prompt, referenc
   const body = JSON.stringify({
     model,
     prompt,
-    image: images.length > 0 ? images : undefined,
+    ...(images.length > 0 ? { images } : {}),
+    n: 1,
     size: size || '1024x1024',
     quality: quality || 'medium',
-    response_format: 'url',
   });
 
   const response = await fetch(url, {
@@ -841,127 +768,6 @@ async function generateImageViaImagesApi({ url, headers, model, prompt, referenc
   throw createNoImageError(JSON.stringify(data).slice(0, 500), 'Images API');
 }
 
-// /v1/chat/completions 模式：流式，从文本中提取图片
-async function generateImageViaChatApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage }) {
-  const images = Array.isArray(referenceImages) ? referenceImages.filter(Boolean) : [];
-  const sizeHint = size ? `，图片尺寸${size}` : '';
-  const qualityHint = quality ? `，画质${quality}` : '';
-  const refHint = images.length > 0 ? `请参考这${images.length}张图片，` : '请根据以下描述生成图片：';
-  const textPart = `${refHint}${prompt}${sizeHint}${qualityHint}`;
-
-  let userContent;
-  if (images.length > 0) {
-    userContent = [
-      { type: 'text', text: textPart },
-      ...images.map((url) => ({ type: 'image_url', image_url: { url } })),
-    ];
-  } else {
-    userContent = textPart;
-  }
-
-  const body = JSON.stringify({
-    model,
-    messages: [{ role: 'user', content: userContent }],
-    stream: true,
-    size: size || '1024x1024',
-    quality: quality || 'medium',
-  });
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body,
-    signal,
-  });
-
-  if (!response.ok) {
-    await throwDrawResponseError(response);
-  }
-
-  const contentType = response.headers.get('content-type') || '';
-  let fullText = '';
-
-  if (response.body && (contentType.includes('text/event-stream') || contentType.includes('text/plain'))) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      while (buffer.includes('\n\n')) {
-        const boundaryIndex = buffer.indexOf('\n\n');
-        const rawEvent = buffer.slice(0, boundaryIndex);
-        buffer = buffer.slice(boundaryIndex + 2);
-
-        const dataLines = rawEvent
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trim());
-
-        const joined = dataLines.join('\n');
-        if (!joined || joined === '[DONE]') continue;
-
-        const parsed = safeJsonParse(joined);
-        if (parsed) {
-          const imageUrl = extractImageUrlFromPayload(parsed);
-          if (imageUrl) {
-            onImage(imageUrl);
-            return;
-          }
-          const text = extractTextFromEvent(parsed);
-          if (text) fullText += text;
-        }
-      }
-    }
-
-    if (buffer.trim()) {
-      const parsed = safeJsonParse(buffer.trim());
-      if (parsed) {
-        const imageUrl = extractImageUrlFromPayload(parsed);
-        if (imageUrl) {
-          onImage(imageUrl);
-          return;
-        }
-        const text = extractTextFromEvent(parsed);
-        if (text) fullText += text;
-      }
-    }
-  } else {
-    const plainText = await response.text();
-    const parsed = safeJsonParse(plainText);
-    if (parsed) {
-      const imageUrl = extractImageUrlFromPayload(parsed);
-      if (imageUrl) {
-        onImage(imageUrl);
-        return;
-      }
-      fullText = extractTextFromEvent(parsed) || plainText;
-    } else {
-      fullText = plainText;
-    }
-  }
-
-  const imageUrl = extractImageUrlFromContent(fullText);
-  if (imageUrl) {
-    onImage(imageUrl);
-    return;
-  }
-
-  if (fullText.includes('data:image/') || fullText.includes('base64')) {
-    const dataMatch = fullText.match(/(data:image\/[^;]+;base64,[A-Za-z0-9+/=]+)/);
-    if (dataMatch) {
-      onImage(dataMatch[1]);
-      return;
-    }
-  }
-
-  throw createNoImageError(fullText, 'Chat API');
-}
-
 export async function generateImage({
   settings,
   prompt,
@@ -973,8 +779,6 @@ export async function generateImage({
   onTaskStart,
   taskMetadata,
 }) {
-  const apiMode = 'images'; // 写死 Images API
-
   if (settings.useProxy) {
     return generateImageViaTaskApi({
       settings,
@@ -989,13 +793,10 @@ export async function generateImage({
     });
   }
 
-  const url = resolveDrawProxyUrl(settings, apiMode);
-  const headers = buildDrawHeaders(settings, apiMode);
+  const hasReferenceImages = Array.isArray(referenceImages) && referenceImages.some(Boolean);
+  const url = resolveDrawProxyUrl(settings, hasReferenceImages);
+  const headers = buildDrawHeaders(settings, hasReferenceImages);
   const model = settings.drawModel || 'gpt-image-2';
-
-  if (apiMode === 'chat') {
-    return generateImageViaChatApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage });
-  }
 
   return generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage });
 }
@@ -1019,8 +820,6 @@ export async function generateImageBatch({
     method: 'POST',
     headers: getAuthorizedHeaders(),
     body: JSON.stringify({
-      apiMode: 'images', // 写死 Images API
-      source: settings.source || 'rightcode',
       prompt,
       referenceImages: Array.isArray(referenceImages) ? referenceImages : [],
       size: size || '1024x1024',

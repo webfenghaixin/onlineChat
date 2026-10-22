@@ -1,19 +1,8 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const SOURCE_ENV_MAP = {
-  luxee: {
-    key: 'API_KEY_LUXEE',
-    endpoint: 'https://api.luxee.ai/v1/chat/completions',
-  },
-  rightcode: {
-    key: 'API_KEY_RIGHTCODE',
-    endpoint: 'https://www.rightapi.ai/codex/v1/chat/completions',
-    pricing: {
-      daily: 'https://www.rightapi.ai/codex/v1/responses',
-    },
-  },
-};
+const CHAT_ENDPOINT = 'https://www.rightapi.ai/v1/chat/completions';
+const CHAT_KEY_ENV = 'API_KEY_CHAT';
 
 function createProxyPlugin(env) {
   return {
@@ -36,48 +25,8 @@ function createProxyPlugin(env) {
           return;
         }
 
-        const source = ((req.headers['x-source'] || 'luxee') + '').toLowerCase();
-        const pricing = ((req.headers['x-pricing'] || '') + '').toLowerCase();
-        const sourceConfig = SOURCE_ENV_MAP[source];
-
-        if (!sourceConfig) {
-          res.statusCode = 400;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: `Unknown source: ${source}. Available: luxee, rightcode.` }));
-          return;
-        }
-
-        const serverApiKey = env[sourceConfig.key] || '';
-        let serverEndpoint = '';
-        if (pricing && sourceConfig.pricing && sourceConfig.pricing[pricing]) {
-          serverEndpoint = sourceConfig.pricing[pricing];
-        } else {
-          serverEndpoint = sourceConfig.endpoint || '';
-        }
-
-        if (!serverEndpoint) {
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: `Server endpoint not configured for source: ${source}. Check .env file.` }));
-          return;
-        }
-
-        let parsedUrl;
-        try {
-          parsedUrl = new URL(serverEndpoint);
-        } catch (error) {
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: 'Invalid server endpoint configuration.' }));
-          return;
-        }
-
-        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json; charset=utf-8');
-          res.end(JSON.stringify({ error: 'Server endpoint must use http or https.' }));
-          return;
-        }
+        const serverApiKey = env[CHAT_KEY_ENV] || '';
+        const serverEndpoint = CHAT_ENDPOINT;
 
         const chunks = [];
         for await (const chunk of req) {

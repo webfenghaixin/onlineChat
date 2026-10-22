@@ -33,7 +33,6 @@ export function renderMarkdown(text) {
 export function normalizeModelSettings(settings) {
   const nextSettings = {
     ...settings,
-    rightcodePricing: 'regular',
     stream: true,
     useProxy: true,
     proxyPath: DEFAULT_PROXY_PATH,

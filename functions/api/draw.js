@@ -4,7 +4,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const DRAW_BASE = 'https://www.rightapi.ai/draw';
+const DRAW_BASE = 'https://rightapi.ai';
 
 function jsonResponse(statusCode, body, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -28,12 +28,10 @@ export async function onRequest(context) {
     return jsonResponse(405, { error: 'Only POST is allowed.' });
   }
 
-  const source = (request.headers.get('x-source') || 'rightcode').toLowerCase();
-  const envKey = source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
-  const serverApiKey = env[envKey] || '';
+  const serverApiKey = env.API_KEY_DRAW || '';
 
   const requestedDrawPath = request.headers.get('x-draw-path') || '/v1/images/generations';
-  const drawPath = ['/v1/images/generations', '/v1/chat/completions'].includes(requestedDrawPath)
+  const drawPath = ['/v1/images/generations', '/v1/images/edits'].includes(requestedDrawPath)
     ? requestedDrawPath
     : '/v1/images/generations';
   const drawEndpoint = `${DRAW_BASE}${drawPath}`;

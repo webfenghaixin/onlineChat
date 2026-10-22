@@ -4,19 +4,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const SOURCE_ENV_MAP = {
-  luxee: {
-    key: 'API_KEY_LUXEE',
-    endpoint: 'https://api.luxee.ai/v1/chat/completions',
-  },
-  rightcode: {
-    key: 'API_KEY_RIGHTCODE',
-    endpoint: 'https://www.rightapi.ai/codex/v1/chat/completions',
-    pricing: {
-      daily: 'https://www.rightapi.ai/codex/v1/responses',
-    },
-  },
-};
+const UPSTREAM_ENDPOINT = 'https://www.rightapi.ai/v1/chat/completions';
 
 function jsonResponse(statusCode, body, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -40,39 +28,8 @@ export async function onRequest(context) {
     return jsonResponse(405, { error: 'Only POST is allowed.' });
   }
 
-  const source = (request.headers.get('x-source') || 'luxee').toLowerCase();
-  const pricing = (request.headers.get('x-pricing') || '').toLowerCase();
-  const sourceConfig = SOURCE_ENV_MAP[source];
-
-  if (!sourceConfig) {
-    return jsonResponse(400, { error: `Unknown source: ${source}. Available: luxee, rightcode.` });
-  }
-
-  const serverApiKey = env[sourceConfig.key] || '';
-  let serverEndpoint = '';
-  if (pricing && sourceConfig.pricing && sourceConfig.pricing[pricing]) {
-    serverEndpoint = sourceConfig.pricing[pricing];
-  } else {
-    serverEndpoint = sourceConfig.endpoint || '';
-  }
-
-  if (!serverEndpoint) {
-    return jsonResponse(500, { error: `Server endpoint not configured for source: ${source}.` });
-  }
-
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(serverEndpoint);
-  } catch {
-    return jsonResponse(500, { error: 'Invalid server endpoint configuration.' });
-  }
-
-  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-    return jsonResponse(500, { error: 'Server endpoint must use http or https.' });
-  }
-
+  const serverApiKey = env.API_KEY_CHAT || '';
   const contentType = request.headers.get('content-type') || 'application/json';
-
   const authorization = serverApiKey ? `Bearer ${serverApiKey}` : '';
 
   let requestBody;
@@ -90,7 +47,7 @@ export async function onRequest(context) {
   }
 
   try {
-    const upstreamResponse = await fetch(serverEndpoint, {
+    const upstreamResponse = await fetch(UPSTREAM_ENDPOINT, {
       method: 'POST',
       headers: upstreamHeaders,
       body: requestBody,

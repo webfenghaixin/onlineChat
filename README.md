@@ -63,8 +63,8 @@ npm run build
 |------|------|
 | `VITE_INVITE_CODE` | 前端邀请码（注册页校验） |
 | `VITE_API_TARGET` | 后端 API 地址（默认 `https://www.lightchat.online`） |
-| `API_KEY_LUXEE` | Luxee AI 接口密钥（本地代理用） |
-| `API_KEY_RIGHTCODE` | RightCode AI 接口密钥（本地代理用） |
+| `API_KEY_CHAT` | rightapi 聊天接口密钥（聊天代理用） |
+| `API_KEY_DRAW` | rightapi 制图接口密钥（制图路由用） |
 | `INVITE_CODE` | 后端邀请码校验值 |
 | `JWT_SECRET` | JWT 签名密钥 |
 | `UPSTASH_REDIS_REST_URL` | Upstash Redis 地址 |

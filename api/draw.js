@@ -8,8 +8,8 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const DRAW_BASE = 'https://www.rightapi.ai/draw';
-const ALLOWED_DRAW_PATHS = ['/v1/images/generations', '/v1/chat/completions'];
+const DRAW_BASE = 'https://rightapi.ai';
+const ALLOWED_DRAW_PATHS = ['/v1/images/generations', '/v1/images/edits'];
 
 function sendJson(res, statusCode, body, extraHeaders = {}) {
   res.statusCode = statusCode;
@@ -52,9 +52,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const source = String(req.headers['x-source'] || 'rightcode').toLowerCase();
-  const envKey = source === 'rightcode' ? 'API_KEY_RIGHTCODE' : 'API_KEY_LUXEE';
-  const serverApiKey = process.env[envKey] || '';
+  const serverApiKey = process.env.API_KEY_DRAW || '';
 
   const requestedDrawPath = String(req.headers['x-draw-path'] || '/v1/images/generations');
   const drawPath = ALLOWED_DRAW_PATHS.includes(requestedDrawPath)

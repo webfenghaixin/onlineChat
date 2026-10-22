@@ -51,25 +51,15 @@ export const FONT_SIZE_OPTIONS = [
   { value: 'xl', label: '超大' },
 ];
 
-export const SOURCE_OPTIONS = [
-  { value: 'luxee', label: 'Luxee' },
-  { value: 'rightcode', label: 'RightCode' },
-];
-
-export const RIGHTCODE_PRICING_OPTIONS = [
-  { value: 'regular', label: '正价' },
-  { value: 'daily', label: '日抛' },
-];
-
 export const MODEL_OPTIONS = [
-  { value: 'gpt-5.6-luna', label: 'light-5.6-luna' },
-  { value: 'gpt-5.6-terra', label: 'light-5.6-terra' },
-  { value: 'gpt-5.6-sol', label: 'light-5.6-sol' },
+  { value: 'gpt-6.1-sol', label: 'light-gpt-6.1-sol' },
+  { value: 'gpt-6-sol', label: 'light-gpt-6-sol' },
 ];
 
 export const DRAW_MODEL_OPTIONS = [
   { value: 'gpt-image-2', label: 'light-image-2' },
-  { value: 'gpt-image-2-vip', label: 'light-image-2-vip（暂不可用）', disabled: true },
+  { value: 'gpt-image-2-vip', label: 'light-image-2-vip' },
+  { value: 'gpt-image-2.5', label: 'light-image-2.5' },
 ];
 
 export const DRAW_SIZE_OPTIONS = [
@@ -87,11 +77,6 @@ export const DRAW_QUALITY_OPTIONS = [
   { value: 'auto', label: '自动' },
 ];
 
-export const DRAW_API_MODE_OPTIONS = [
-  { value: 'images', label: 'Images API' },
-  { value: 'chat', label: 'Chat API' },
-];
-
 export const DRAW_STYLE_OPTIONS = [
   { value: '', label: '自动 / 无' },
   { value: 'photoreal', label: '写实摄影', prompt: 'Photorealistic, high detail, natural lighting' },
@@ -103,11 +88,9 @@ export const DRAW_STYLE_OPTIONS = [
 ];
 
 export const defaultSettings = {
-  source: 'rightcode',
-  rightcodePricing: 'regular',
   endpoint: '',
   apiKey: '',
-  model: 'gpt-5.6-luna',
+  model: 'gpt-6.1-sol',
   requestMode: 'chat',
   systemPrompt: '你是一位耐心、清晰、友好的 AI 助手。请优先用简洁易懂的中文回答。',
   temperature: 0.7,
@@ -119,7 +102,6 @@ export const defaultSettings = {
   drawSize: '1024x1024',
   drawQuality: 'medium',
   drawModel: 'gpt-image-2',
-  drawApiMode: 'images',
   drawStyle: '',
   drawImageCount: 1,
 };

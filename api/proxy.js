@@ -17,7 +17,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const UPSTREAM_ENDPOINT = 'https://www.rightapi.ai/v1/chat/completions';
+const UPSTREAM_ENDPOINT = 'https://rightapi.io/v1/chat/completions';
 
 function jsonResponse(statusCode, body, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {

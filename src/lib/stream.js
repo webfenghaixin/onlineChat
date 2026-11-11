@@ -468,7 +468,7 @@ function resolveDrawProxyUrl(settings, hasReferenceImages) {
     }
     return drawPath.startsWith('/') ? drawPath : `/${drawPath}`;
   }
-  const basePath = 'https://rightapi.ai';
+  const basePath = 'https://rightapi.io';
   return `${basePath}${hasReferenceImages ? '/v1/images/edits' : '/v1/images/generations'}`;
 }
 

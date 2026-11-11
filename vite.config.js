@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
-const CHAT_ENDPOINT = 'https://www.rightapi.ai/v1/chat/completions';
+const CHAT_ENDPOINT = 'https://rightapi.io/v1/chat/completions';
 const CHAT_KEY_ENV = 'API_KEY_CHAT';
 
 function createProxyPlugin(env) {

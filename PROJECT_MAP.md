@@ -315,12 +315,11 @@ onlineChat/
 
 | 用途 | 端点 |
 |------|------|
-| Luxee 聊天 | `https://api.luxee.ai/v1/chat/completions` |
-| RightCode 聊天 | `https://www.rightapi.ai/codex-pro/v1/chat/completions` |
-| RightCode 日抛 | `https://www.rightapi.ai/codex/v1/responses` |
-| Gemini | `https://www.rightapi.ai/gemini/v1beta/models/{model}:streamGenerateContent?alt=sse` |
-| 画图 Images API | `https://www.rightapi.ai/draw/v1/images/generations` |
-| 画图 Chat API | `https://www.rightapi.ai/draw/v1/chat/completions` |
+| 聊天 | `https://rightapi.io/v1/chat/completions` |
+| 画图 · 文生图 | `https://rightapi.io/v1/images/generations` |
+| 画图 · 图片编辑 | `https://rightapi.io/v1/images/edits` |
+| 画图 · 任务查询 | `https://rightapi.io/v1/tasks/{task_id}` |
+| Claude 渠道（预留） | `https://rightapi.io`（不带 `/v1`） |
 
 ---
 

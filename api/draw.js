@@ -8,7 +8,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const DRAW_BASE = 'https://rightapi.ai';
+const DRAW_BASE = 'https://rightapi.io';
 const ALLOWED_DRAW_PATHS = ['/v1/images/generations', '/v1/images/edits'];
 
 function sendJson(res, statusCode, body, extraHeaders = {}) {

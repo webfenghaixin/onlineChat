@@ -1,8 +1,8 @@
-const RIGHTAPI_BASE = 'https://rightapi.ai';
+const RIGHTAPI_BASE = 'https://rightapi.io';
 const DRAW_GENERATIONS_ENDPOINT = `${RIGHTAPI_BASE}/v1/images/generations`;
 const DRAW_EDITS_ENDPOINT = `${RIGHTAPI_BASE}/v1/images/edits`;
 
-// rightapi.ai 异步任务轮询参数
+// rightapi.io 异步任务轮询参数
 const RIGHTAPI_TASK_POLL_INTERVAL_MS = 3000;
 // 留 20 秒缓冲给 Vercel maxDuration=300s，避免函数被强制终止
 const RIGHTAPI_TASK_MAX_WAIT_MS = 280000;
@@ -116,7 +116,7 @@ export function normalizeDrawErrorMessage(rawText, status, apiModeLabel = '当�
   return `${apiModeLabel} 没有返回可用图片，请稍后重试。`;
 }
 
-// 轮询 rightapi.ai 异步任务，直到完成或超时
+// 轮询 rightapi.io 异步任务，直到完成或超时
 async function pollRightApiTask({ apiKey, taskId, signal }) {
   const url = `${RIGHTAPI_BASE}/v1/tasks/${encodeURIComponent(taskId)}`;
   const headers = {};
@@ -166,7 +166,7 @@ async function pollRightApiTask({ apiKey, taskId, signal }) {
   throw new Error('图片生成超时，请稍后重试。');
 }
 
-// 将 http(s) URL 参考图下载并转为 data URL，rightapi.ai 的 image 字段需要 data URL。
+// 将 http(s) URL 参考图下载并转为 data URL，rightapi.io 的图片编辑接口需要 data URL。
 // 已是 data URL 的直接保留。
 async function resolveReferenceImagesToDataUrls(referenceImages) {
   if (!Array.isArray(referenceImages) || referenceImages.length === 0) return [];

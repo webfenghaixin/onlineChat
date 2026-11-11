@@ -60,7 +60,7 @@ export const DRAW_MODEL_OPTIONS = [
   { value: 'gpt-image-2', label: 'light-image-2' },
   { value: 'gpt-image-2-vip', label: 'light-image-2-vip' },
   { value: 'gpt-image-2.5', label: 'light-image-2.5' },
-  { value: 'gpt-image-2.6-flare', label: 'light-image-2.6-flare' },
+  { value: 'gpt-image-2.6', label: 'light-image-2.6' },
   { value: 'gpt-image-2.6-sunburst', label: 'light-image-2.6-sunburst' },
 ];
 

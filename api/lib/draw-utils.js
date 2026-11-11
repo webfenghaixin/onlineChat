@@ -23,6 +23,8 @@ export function cleanDrawOptions(options = {}) {
     size: options.size || '1024x1024',
     quality: options.quality || 'medium',
     model: options.model || 'gpt-image-2',
+    // 默认参考图仍随 generations 接口提交，只有显式开启才改走图片编辑接口
+    useEdits: Boolean(options.useEdits),
   };
 }
 
@@ -166,7 +168,7 @@ async function pollRightApiTask({ apiKey, taskId, signal }) {
   throw new Error('图片生成超时，请稍后重试。');
 }
 
-// 将 http(s) URL 参考图下载并转为 data URL，rightapi.io 的图片编辑接口需要 data URL。
+// 将 http(s) URL 参考图下载并转为 data URL，上游接口需要 data URL。
 // 已是 data URL 的直接保留。
 async function resolveReferenceImagesToDataUrls(referenceImages) {
   if (!Array.isArray(referenceImages) || referenceImages.length === 0) return [];
@@ -194,13 +196,14 @@ export async function runDrawRequest({ apiKey, options, signal }) {
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  // 参考图持久化在对象存储（http URL），图片编辑接口需要 data URL，这里转换
+  // 参考图持久化在对象存储（http URL），需要转成 data URL 再提交
   cleaned.referenceImages = await resolveReferenceImagesToDataUrls(cleaned.referenceImages);
 
-  // 有参考图走图片编辑接口，无参考图走文生图接口
-  const hasReferenceImages = cleaned.referenceImages.length > 0;
-  const endpoint = hasReferenceImages ? DRAW_EDITS_ENDPOINT : DRAW_GENERATIONS_ENDPOINT;
-  const body = hasReferenceImages ? buildEditsBody(cleaned) : buildGenerationBody(cleaned);
+  // 有参考图时默认仍走文生图接口（参考图放 image 字段）；
+  // 只有用户显式开启「参考图走 Edits」才切到图片编辑接口（参考图放 images 字段）
+  const useEdits = cleaned.useEdits && cleaned.referenceImages.length > 0;
+  const endpoint = useEdits ? DRAW_EDITS_ENDPOINT : DRAW_GENERATIONS_ENDPOINT;
+  const body = useEdits ? buildEditsBody(cleaned) : buildGenerationBody(cleaned);
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -238,9 +241,11 @@ export async function runDrawRequest({ apiKey, options, signal }) {
 }
 
 function buildGenerationBody(options) {
+  const images = options.referenceImages.length > 0 ? options.referenceImages : undefined;
   return {
     model: options.model,
     prompt: options.prompt,
+    image: images,
     n: 1,
     size: options.size,
     quality: options.quality,

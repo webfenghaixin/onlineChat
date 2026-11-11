@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, memo } from 'react';
-import { Button, Card, Collapse, Icon, Loading, Tabs, Tooltip } from 'animal-island-ui';
+import { Button, Card, Collapse, Icon, Loading, Switch, Tabs, Tooltip } from 'animal-island-ui';
 import item001 from 'animal-island-ui/items/item-001.png';
 import PortaledSelect from '../shared/PortaledSelect';
 import {
@@ -1191,6 +1191,15 @@ export default function DrawPage({
                           value={String(currentImageCount)}
                           onChange={(value) => setSettings((s) => ({ ...s, drawImageCount: Number(value) || 1 }))}
                           options={drawCountOptions}
+                        />
+                      </div>
+                      <div className="draw-config-item">
+                        <span>参考图走 Edits</span>
+                        <Switch
+                          size="small"
+                          checked={Boolean(settings.drawUseEdits)}
+                          onChange={(checked) => setSettings((s) => ({ ...s, drawUseEdits: checked }))}
+                          aria-label="参考图使用图片编辑接口"
                         />
                       </div>
                       {activeDrawMessages.length > 0 && !isGenerating && (

@@ -459,7 +459,7 @@ export async function streamChatCompletion({ settings, messages, signal, onText 
   onText(tail);
 }
 
-function resolveDrawProxyUrl(settings, hasReferenceImages) {
+function resolveDrawProxyUrl(settings, useEdits) {
   if (settings.useProxy) {
     const proxyPath = settings.proxyPath?.trim() || DEFAULT_PROXY_PATH;
     const drawPath = proxyPath.replace(/\/proxy\/?$/, '/draw').replace(/\/proxy$/, '/draw');
@@ -469,16 +469,16 @@ function resolveDrawProxyUrl(settings, hasReferenceImages) {
     return drawPath.startsWith('/') ? drawPath : `/${drawPath}`;
   }
   const basePath = 'https://rightapi.io';
-  return `${basePath}${hasReferenceImages ? '/v1/images/edits' : '/v1/images/generations'}`;
+  return `${basePath}${useEdits ? '/v1/images/edits' : '/v1/images/generations'}`;
 }
 
-function buildDrawHeaders(settings, hasReferenceImages) {
+function buildDrawHeaders(settings, useEdits) {
   const headers = {
     'Content-Type': 'application/json',
   };
 
   if (settings.useProxy) {
-    headers['X-Draw-Path'] = hasReferenceImages
+    headers['X-Draw-Path'] = useEdits
       ? '/v1/images/edits'
       : '/v1/images/generations';
   } else if (settings.apiKey.trim()) {
@@ -636,6 +636,7 @@ async function generateImageViaTaskApi({
       size: size || '1024x1024',
       quality: quality || 'medium',
       model: settings.drawModel || 'gpt-image-2',
+      useEdits: Boolean(settings.drawUseEdits),
       taskMetadata,
     }),
     signal,
@@ -736,12 +737,12 @@ export async function pollDrawTask({ settings, taskId, startedAt, signal, onImag
 }
 
 // /v1/images/generations 模式：非流式，直接返回 JSON
-async function generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage }) {
+async function generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, useEdits, signal, onImage }) {
   const images = Array.isArray(referenceImages) ? referenceImages.filter(Boolean) : [];
   const body = JSON.stringify({
     model,
     prompt,
-    ...(images.length > 0 ? { images } : {}),
+    ...(images.length > 0 ? (useEdits ? { images } : { image: images }) : {}),
     n: 1,
     size: size || '1024x1024',
     quality: quality || 'medium',
@@ -794,11 +795,12 @@ export async function generateImage({
   }
 
   const hasReferenceImages = Array.isArray(referenceImages) && referenceImages.some(Boolean);
-  const url = resolveDrawProxyUrl(settings, hasReferenceImages);
-  const headers = buildDrawHeaders(settings, hasReferenceImages);
+  const useEdits = Boolean(settings.drawUseEdits) && hasReferenceImages;
+  const url = resolveDrawProxyUrl(settings, useEdits);
+  const headers = buildDrawHeaders(settings, useEdits);
   const model = settings.drawModel || 'gpt-image-2';
 
-  return generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage });
+  return generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, useEdits, signal, onImage });
 }
 
 // 批量制图：前端一次请求创建N个任务，后端异步执行，前端并行轮询
@@ -825,6 +827,7 @@ export async function generateImageBatch({
       size: size || '1024x1024',
       quality: quality || 'medium',
       model: settings.drawModel || 'gpt-image-2',
+      useEdits: Boolean(settings.drawUseEdits),
       count,
       taskMetadata,
     }),

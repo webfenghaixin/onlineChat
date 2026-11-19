@@ -327,7 +327,7 @@ async function upsertDrawTaskRecordUnlocked(redis, username, metadata, patch = {
   });
 }
 
-export async function runTask({ redis, taskKey, task, apiKey }) {
+export async function runTask({ redis, taskKey, task, apiKey, refundOnFailure = true }) {
   const lockKey = resolveTaskLockKey(task);
   let lockAcquired = false;
   if (lockKey) {
@@ -421,14 +421,17 @@ export async function runTask({ redis, taskKey, task, apiKey }) {
     } catch (recordError) {
       console.error('upsertDrawTaskRecord failed after task failed:', recordError);
     }
-    const refundAmount = Number(task.charged) > 0 ? Number(task.charged) : COST_DRAW;
-    try {
-      const refund = await refundUser(redis, task.owner, refundAmount);
-      if (!refund.ok) {
-        console.error('[draw-task] refund failed', task.owner, task.id, refundAmount, refund.reason || '');
+    // 外部 AI 调用的任务没有预扣费，失败时不退款
+    if (refundOnFailure) {
+      const refundAmount = Number(task.charged) > 0 ? Number(task.charged) : COST_DRAW;
+      try {
+        const refund = await refundUser(redis, task.owner, refundAmount);
+        if (!refund.ok) {
+          console.error('[draw-task] refund failed', task.owner, task.id, refundAmount, refund.reason || '');
+        }
+      } catch (refundError) {
+        console.error('[draw-task] refund failed', task.owner, task.id, refundAmount, refundError instanceof Error ? refundError.message : String(refundError));
       }
-    } catch (refundError) {
-      console.error('[draw-task] refund failed', task.owner, task.id, refundAmount, refundError instanceof Error ? refundError.message : String(refundError));
     }
   } finally {
     if (lockKey && lockAcquired) {

@@ -11,6 +11,12 @@
     },
     "api/draw-task/status.js": {
       "maxDuration": 10
+    },
+    "api/ai/draw.js": {
+      "maxDuration": 300
+    },
+    "api/mcp.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

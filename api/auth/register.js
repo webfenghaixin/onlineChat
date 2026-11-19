@@ -9,8 +9,8 @@ import {
   setRedisJsonNx,
   getRedisJson,
   BALANCE_INITIAL,
-} from '../lib/auth-utils.js';
-import { getLimiter, limitRequest, getRequestIp } from '../lib/ratelimit.js';
+} from '../../lib/auth-utils.js';
+import { getLimiter, limitRequest, getRequestIp } from '../../lib/ratelimit.js';
 
 export default async function handler(request) {
   if (request.method === 'OPTIONS') return handleOptions();

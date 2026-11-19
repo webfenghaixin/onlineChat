@@ -146,7 +146,7 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: true,
         },
-        '/api/balance': {
+        '/api/account': {
           target: apiTarget,
           changeOrigin: true,
           secure: true,
@@ -157,11 +157,6 @@ export default defineConfig(({ mode }) => {
           secure: true,
         },
         '/api/draw-task': {
-          target: apiTarget,
-          changeOrigin: true,
-          secure: true,
-        },
-        '/api/draw': {
           target: apiTarget,
           changeOrigin: true,
           secure: true,

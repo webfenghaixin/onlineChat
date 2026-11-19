@@ -8,7 +8,7 @@ import {
   getRedisJson,
   chargeUser,
   COST_CHAT,
-} from './lib/auth-utils.js';
+} from '../lib/auth-utils.js';
 import { waitUntil } from '@vercel/functions';
 
 const CORS_HEADERS = {

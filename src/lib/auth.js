@@ -85,18 +85,19 @@ export async function login(username, password) {
 }
 
 export async function changePassword(oldPassword, newPassword) {
-  await apiRequest(resolveApiUrl('/api/auth/change-password'), {
+  await apiRequest(resolveApiUrl('/api/account'), {
     method: 'POST',
-    body: JSON.stringify({ oldPassword, newPassword }),
+    body: JSON.stringify({ action: 'change-password', oldPassword, newPassword }),
   });
   return true;
 }
 
 export async function saveToCloud(state, options = {}) {
-  await apiRequest(resolveApiUrl('/api/data/save'), {
+  await apiRequest(resolveApiUrl('/api/account'), {
     method: 'POST',
     keepalive: options.keepalive,
     body: JSON.stringify({
+      action: 'save-data',
       conversations: state.conversations,
       settings: state.settings,
       activeConversationId: state.activeConversationId,
@@ -117,19 +118,19 @@ export async function fetchConversation(conversationId) {
 }
 
 export async function fetchDrawConversation(conversationId) {
-  const data = await apiRequest(resolveApiUrl(`/api/data/draw-conversation?id=${encodeURIComponent(conversationId)}`));
+  const data = await apiRequest(resolveApiUrl(`/api/data/conversation?id=${encodeURIComponent(conversationId)}&type=draw`));
   return data;
 }
 
 export async function fetchBalance() {
-  const data = await apiRequest(resolveApiUrl('/api/balance'), { method: 'GET' });
+  const data = await apiRequest(resolveApiUrl('/api/account?action=balance'), { method: 'GET' });
   return data;
 }
 
 export async function rechargeBalance(amount, code) {
-  const data = await apiRequest(resolveApiUrl('/api/balance'), {
+  const data = await apiRequest(resolveApiUrl('/api/account'), {
     method: 'POST',
-    body: JSON.stringify({ amount, code }),
+    body: JSON.stringify({ action: 'recharge', amount, code }),
   });
   return data;
 }

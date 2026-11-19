@@ -2,8 +2,8 @@ export const config = {
   maxDuration: 10,
 };
 
-import { createRedis, getRedisJson, setRedisJson, verifyJWT, refundUser, COST_DRAW } from '../lib/auth-utils.js';
-import { getLimiter, limitRequest } from '../lib/ratelimit.js';
+import { createRedis, getRedisJson, setRedisJson, verifyJWT, refundUser, COST_DRAW } from '../../lib/auth-utils.js';
+import { getLimiter, limitRequest } from '../../lib/ratelimit.js';
 
 const TASK_TTL_SECONDS = 24 * 60 * 60;
 const TASK_RUNNING_TIMEOUT_MS = 5 * 60 * 1000;

@@ -4,7 +4,7 @@ export const config = { maxDuration: 60 };
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createDrawClient, registerDrawTools } from '../mcp-server/tools.js';
-import { extractApiKey, verifyApiKey } from './lib/ai-auth.js';
+import { extractApiKey, verifyApiKey } from '../lib/ai-auth.js';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',

@@ -1,9 +1,9 @@
 export const config = { maxDuration: 300 };
 
-import { createRedis, getRedisJson } from '../lib/auth-utils.js';
-import { cleanDrawOptions } from '../lib/draw-utils.js';
-import { extractApiKey, verifyApiKey } from '../lib/ai-auth.js';
-import { getLimiter, limitRequest } from '../lib/ratelimit.js';
+import { createRedis, getRedisJson } from '../../lib/auth-utils.js';
+import { cleanDrawOptions } from '../../lib/draw-utils.js';
+import { extractApiKey, verifyApiKey } from '../../lib/ai-auth.js';
+import { getLimiter, limitRequest } from '../../lib/ratelimit.js';
 import { setTask, runTask, sendJson, setCorsHeaders, readJsonBody } from '../draw-task/start.js';
 import { waitUntil } from '@vercel/functions';
 

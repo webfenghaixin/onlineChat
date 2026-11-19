@@ -6,7 +6,7 @@ import {
   authenticate,
   createRedis,
   getRedisJson,
-} from '../lib/auth-utils.js';
+} from '../../lib/auth-utils.js';
 
 export default async function handler(request) {
   if (request.method === 'OPTIONS') return handleOptions();
@@ -37,7 +37,7 @@ export default async function handler(request) {
   const activeDrawId = meta.activeDrawConversationId || (drawConversations[0]?.id ?? null);
 
   // load 只返回会话目录。完整消息由客户端选中会话后通过
-  // /api/data/conversation 或 /api/data/draw-conversation 按需加载。
+  // /api/data/conversation 按需加载（type=draw 读取制图会话）。
   const resultConversations = conversations.map((conv) => ({
     ...conv,
     messages: [],

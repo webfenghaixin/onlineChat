@@ -459,29 +459,18 @@ export async function streamChatCompletion({ settings, messages, signal, onText 
   onText(tail);
 }
 
-function resolveDrawProxyUrl(settings, useEdits) {
-  if (settings.useProxy) {
-    const proxyPath = settings.proxyPath?.trim() || DEFAULT_PROXY_PATH;
-    const drawPath = proxyPath.replace(/\/proxy\/?$/, '/draw').replace(/\/proxy$/, '/draw');
-    if (/^https?:\/\//i.test(drawPath)) {
-      return drawPath;
-    }
-    return drawPath.startsWith('/') ? drawPath : `/${drawPath}`;
-  }
+function resolveDrawProxyUrl(useEdits) {
+  // 代理模式统一走 draw-task 异步任务；这里只处理直连上游的情况
   const basePath = 'https://rightapi.io';
   return `${basePath}${useEdits ? '/v1/images/edits' : '/v1/images/generations'}`;
 }
 
-function buildDrawHeaders(settings, useEdits) {
+function buildDrawHeaders(settings) {
   const headers = {
     'Content-Type': 'application/json',
   };
 
-  if (settings.useProxy) {
-    headers['X-Draw-Path'] = useEdits
-      ? '/v1/images/edits'
-      : '/v1/images/generations';
-  } else if (settings.apiKey.trim()) {
+  if (settings.apiKey.trim()) {
     headers.Authorization = `Bearer ${settings.apiKey.trim()}`;
   }
 
@@ -796,8 +785,8 @@ export async function generateImage({
 
   const hasReferenceImages = Array.isArray(referenceImages) && referenceImages.some(Boolean);
   const useEdits = Boolean(settings.drawUseEdits) && hasReferenceImages;
-  const url = resolveDrawProxyUrl(settings, useEdits);
-  const headers = buildDrawHeaders(settings, useEdits);
+  const url = resolveDrawProxyUrl(useEdits);
+  const headers = buildDrawHeaders(settings);
   const model = settings.drawModel || 'gpt-image-2';
 
   return generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, useEdits, signal, onImage });
@@ -818,7 +807,7 @@ export async function generateImageBatch({
   taskMetadata,
 }) {
   const startedAt = Date.now();
-  const response = await fetch(resolveDrawTaskUrl(settings, 'batch'), {
+  const response = await fetch(resolveDrawTaskUrl(settings, 'start'), {
     method: 'POST',
     headers: getAuthorizedHeaders(),
     body: JSON.stringify({

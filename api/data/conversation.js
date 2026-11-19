@@ -6,7 +6,7 @@ import {
   authenticate,
   createRedis,
   getRedisJson,
-} from '../lib/auth-utils.js';
+} from '../../lib/auth-utils.js';
 
 export default async function handler(request) {
   if (request.method === 'OPTIONS') return handleOptions();
@@ -20,12 +20,15 @@ export default async function handler(request) {
 
   const url = new URL(request.url);
   const conversationId = url.searchParams.get('id');
+  // type=draw 读取制图绘画会话，默认读取聊天会话
+  const isDraw = (url.searchParams.get('type') || 'chat') === 'draw';
 
   if (!conversationId) {
     return jsonResponse(400, { error: '缺少对话ID参数' });
   }
 
-  const data = await getRedisJson(redis, `data:${auth.username}:conv:${conversationId}`);
+  const keyPrefix = isDraw ? 'draw' : 'conv';
+  const data = await getRedisJson(redis, `data:${auth.username}:${keyPrefix}:${conversationId}`);
 
   if (!data || !Array.isArray(data.messages)) {
     return jsonResponse(404, { error: '对话不存在' });

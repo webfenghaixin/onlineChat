@@ -40,7 +40,7 @@ export const CHAT_MAX_IMAGES = 5;
 // 解除制图历史照片上限（原 100 张），保留 enforceDrawLimit 逻辑备用，设为极大值即不触发
 export const DRAW_MAX_IMAGES = 100000;
 
-// 余额系统（与服务端 api/lib/auth-utils.js 保持一致）
+// 余额系统（与服务端 lib/auth-utils.js 保持一致）
 export const COST_CHAT = 0.05;
 export const COST_DRAW = 0.3;
 export const BALANCE_RECHARGE_PRESETS = [5, 10, 20, 50];

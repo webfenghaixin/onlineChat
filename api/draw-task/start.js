@@ -2,10 +2,10 @@ export const config = {
   maxDuration: 300,
 };
 
-import { createRedis, getRedisJson, setRedisJson, verifyJWT, chargeUser, refundUser, COST_DRAW, getUserBalance } from '../lib/auth-utils.js';
-import { getLimiter, limitRequest } from '../lib/ratelimit.js';
-import { cleanDrawOptions, runDrawRequest } from '../lib/draw-utils.js';
-import { putPublicImage } from '../lib/cos-storage.js';
+import { createRedis, getRedisJson, setRedisJson, verifyJWT, chargeUser, refundUser, COST_DRAW, getUserBalance } from '../../lib/auth-utils.js';
+import { getLimiter, limitRequest } from '../../lib/ratelimit.js';
+import { cleanDrawOptions, runDrawRequest } from '../../lib/draw-utils.js';
+import { putPublicImage } from '../../lib/cos-storage.js';
 import { waitUntil } from '@vercel/functions';
 
 const CORS_HEADERS = {
@@ -15,6 +15,7 @@ const CORS_HEADERS = {
 };
 
 const TASK_TTL_SECONDS = 24 * 60 * 60;
+const BATCH_MAX_COUNT = 20;
 const IMAGE_TTL_SECONDS = 30 * 24 * 60 * 60;
 const DRAW_DATA_LOCK_TTL_SECONDS = 15;
 const DRAW_DATA_LOCK_WAIT_MS = 8000;
@@ -440,6 +441,116 @@ export async function runTask({ redis, taskKey, task, apiKey, refundOnFailure = 
   }
 }
 
+// 批量制图：前端传 count + taskMetadata.assistantMessages，一次创建 N 个任务
+async function handleBatchDraw({ res, redis, auth, body, options }) {
+  const requestedCount = Math.min(
+    BATCH_MAX_COUNT,
+    Math.max(1, Number(body.count) || 1),
+  );
+
+  // 余额预检：一次性校验总费用
+  const totalCost = Number((COST_DRAW * requestedCount).toFixed(2));
+  const balance = await getUserBalance(redis, auth.username);
+  if (balance < totalCost - 0.0001) {
+    sendJson(res, 402, {
+      error: `余额不足，生成 ${requestedCount} 张图需要 ${totalCost.toFixed(2)} 元，当前余额 ${balance.toFixed(2)} 元`,
+      code: 'INSUFFICIENT_BALANCE',
+      balance,
+      cost: totalCost,
+    });
+    return;
+  }
+
+  const apiKey = process.env.API_KEY_DRAW || '';
+  const rawMetadata = body.taskMetadata || {};
+  const rawAssistantMessages = Array.isArray(rawMetadata.assistantMessages)
+    ? rawMetadata.assistantMessages
+    : [];
+
+  if (rawAssistantMessages.length !== requestedCount) {
+    sendJson(res, 400, { error: 'assistantMessages 数量与 count 不一致' });
+    return;
+  }
+  if (rawAssistantMessages.some((message) => !message?.id)) {
+    sendJson(res, 400, { error: 'assistantMessages 缺少 id' });
+    return;
+  }
+  if (!rawMetadata.userMessage?.id) {
+    sendJson(res, 400, { error: '缺少 userMessage' });
+    return;
+  }
+  if (!String(rawMetadata.conversationId || '')) {
+    sendJson(res, 400, { error: '缺少 conversationId' });
+    return;
+  }
+
+  const baseMetadata = normalizeTaskMetadata(
+    { ...rawMetadata, assistantMessage: rawAssistantMessages[0] },
+    'batch',
+  );
+  if (!baseMetadata) {
+    sendJson(res, 400, { error: 'taskMetadata 不完整' });
+    return;
+  }
+
+  const now = Date.now();
+  const taskRecords = rawAssistantMessages.map((assistantMessage) => {
+    const taskId = crypto.randomUUID();
+    const taskKey = `drawTask:${auth.username}:${taskId}`;
+    const task = {
+      id: taskId,
+      owner: auth.username,
+      status: 'queued',
+      options,
+      metadata: normalizeTaskMetadata(
+        { ...rawMetadata, assistantMessage },
+        taskId,
+      ),
+      createdAt: now,
+      updatedAt: now,
+    };
+    return { task, taskKey, messageId: assistantMessage.id };
+  });
+
+  // 一次性写入 userMessage + 所有 assistantMessages（只获取 1 次锁）
+  await upsertBatchDrawTaskRecord(
+    redis,
+    auth.username,
+    baseMetadata,
+    taskRecords.map(({ task }) => task.metadata?.assistantMessage).filter(Boolean),
+  );
+
+  // 整批预扣费：扣费失败则整批标记 failed，不启动后台任务
+  const charge = await chargeUser(redis, auth.username, totalCost);
+  if (!charge.ok) {
+    for (const { task, taskKey } of taskRecords) {
+      await setTask(redis, taskKey, {
+        ...task,
+        status: 'failed',
+        error: '余额不足，任务未执行',
+        updatedAt: Date.now(),
+        completedAt: Date.now(),
+      });
+    }
+    sendJson(res, 402, {
+      error: `余额不足，生成 ${requestedCount} 张图需要 ${totalCost.toFixed(2)} 元，当前余额 ${(charge.balance || 0).toFixed(2)} 元`,
+      code: 'INSUFFICIENT_BALANCE',
+      balance: charge.balance,
+      cost: totalCost,
+    });
+    return;
+  }
+
+  const tasks = [];
+  for (const { task, taskKey, messageId } of taskRecords) {
+    await setTask(redis, taskKey, { ...task, charged: COST_DRAW });
+    waitUntil(runTask({ redis, taskKey, task: { ...task, charged: COST_DRAW }, apiKey }));
+    tasks.push({ messageId, taskId: task.id });
+  }
+
+  sendJson(res, 202, { tasks });
+}
+
 export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     setCorsHeaders(res);
@@ -483,6 +594,12 @@ export default async function handler(req, res) {
   const options = cleanDrawOptions(body);
   if (!options.prompt) {
     sendJson(res, 400, { error: '请输入图片描述' });
+    return;
+  }
+
+  // 批量模式：taskMetadata.assistantMessages 存在时按批量处理
+  if (Array.isArray(body?.taskMetadata?.assistantMessages)) {
+    await handleBatchDraw({ res, redis, auth, body, options });
     return;
   }
 

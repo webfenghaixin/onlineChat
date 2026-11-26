@@ -93,11 +93,7 @@ export function registerDrawTools(server, client) {
           .array(z.string())
           .max(MAX_REFERENCE_IMAGES)
           .optional()
-          .describe('参考图列表，支持 http(s) URL 或 data:image base64，最多 5 张'),
-        useEdits: z
-          .boolean()
-          .optional()
-          .describe('参考图是否改走图片编辑接口 /v1/images/edits，默认 false'),
+          .describe('参考图列表，支持 http(s) URL 或 data:image base64，最多 5 张；有参考图时自动走图片编辑接口'),
       },
     },
     async (args) => {

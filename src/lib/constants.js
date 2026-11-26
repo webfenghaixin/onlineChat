@@ -104,7 +104,6 @@ export const defaultSettings = {
   drawSize: '1024x1024',
   drawQuality: 'medium',
   drawModel: 'gpt-image-2',
-  drawUseEdits: false,
   drawStyle: '',
   drawImageCount: 1,
 };

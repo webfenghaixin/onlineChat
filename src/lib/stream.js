@@ -625,7 +625,6 @@ async function generateImageViaTaskApi({
       size: size || '1024x1024',
       quality: quality || 'medium',
       model: settings.drawModel || 'gpt-image-2',
-      useEdits: Boolean(settings.drawUseEdits),
       taskMetadata,
     }),
     signal,
@@ -726,12 +725,12 @@ export async function pollDrawTask({ settings, taskId, startedAt, signal, onImag
 }
 
 // /v1/images/generations 模式：非流式，直接返回 JSON
-async function generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, useEdits, signal, onImage }) {
+async function generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage }) {
   const images = Array.isArray(referenceImages) ? referenceImages.filter(Boolean) : [];
   const body = JSON.stringify({
     model,
     prompt,
-    ...(images.length > 0 ? (useEdits ? { images } : { image: images }) : {}),
+    ...(images.length > 0 ? { images } : {}),
     n: 1,
     size: size || '1024x1024',
     quality: quality || 'medium',
@@ -784,12 +783,12 @@ export async function generateImage({
   }
 
   const hasReferenceImages = Array.isArray(referenceImages) && referenceImages.some(Boolean);
-  const useEdits = Boolean(settings.drawUseEdits) && hasReferenceImages;
+  const useEdits = hasReferenceImages;
   const url = resolveDrawProxyUrl(useEdits);
   const headers = buildDrawHeaders(settings);
   const model = settings.drawModel || 'gpt-image-2';
 
-  return generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, useEdits, signal, onImage });
+  return generateImageViaImagesApi({ url, headers, model, prompt, referenceImages, size, quality, signal, onImage });
 }
 
 // 批量制图：前端一次请求创建N个任务，后端异步执行，前端并行轮询
@@ -816,7 +815,6 @@ export async function generateImageBatch({
       size: size || '1024x1024',
       quality: quality || 'medium',
       model: settings.drawModel || 'gpt-image-2',
-      useEdits: Boolean(settings.drawUseEdits),
       count,
       taskMetadata,
     }),
